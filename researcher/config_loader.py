@@ -25,6 +25,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "provider": "",
         "model": "",
         "cmd_template": "",
+        "trigger_score": 0.3,
     },
 }
 

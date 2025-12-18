@@ -88,7 +88,7 @@ def cmd_ingest(cfg, paths: List[str]) -> int:
     return 0
 
 
-def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "off", cloud_cmd: str = "") -> int:
+def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "off", cloud_cmd: str = "", cloud_threshold: float = None) -> int:
     ensure_dirs(cfg)
     logger = setup_logger(Path(cfg.get("data_paths", {}).get("logs", "logs")) / "local.log")
     vs = cfg.get("vector_store", {}) or {}
@@ -96,7 +96,8 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
     idx = _load_index(cfg)
     sanitized, changed = sanitize.sanitize_prompt(prompt)
     hits = idx.search(sanitized, k=k)
-    log_event(logger, f"ask k={k} hits={len(hits)} sanitized={changed}")
+    top_score = max([h[0] for h in hits], default=0.0)
+    log_event(logger, f"ask k={k} hits={len(hits)} top_score={top_score:.3f} sanitized={changed}")
     answer = compose_answer(hits)
     cloud_hits = []
     # Optional local LLM generation
@@ -112,14 +113,18 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
     # Optional cloud hop
     cloud_cfg = cfg.get("cloud", {}) or {}
     effective_cloud_cmd = cloud_cmd or cloud_cfg.get("cmd_template") or os.environ.get("CLOUD_CMD", "")
-    if cloud_mode != "off":
+    threshold = cloud_threshold if cloud_threshold is not None else cloud_cfg.get("trigger_score", 0.0)
+    should_cloud = cloud_mode == "always" or (cloud_mode == "auto" and top_score < threshold)
+    if should_cloud:
         cloud_logs_root = Path(cfg.get("data_paths", {}).get("logs", "logs")) / "cloud"
         result = call_cloud(prompt, effective_cloud_cmd, cloud_logs_root)
-        log_event(logger, f"ask cloud_mode={cloud_mode} rc={result.rc} redacted={result.changed}")
+        log_event(logger, f"ask cloud_mode={cloud_mode} rc={result.rc} redacted={result.changed} trigger={top_score:.3f}/{threshold}")
         if result.ok and result.output:
             cloud_hits.append((0.0, {"path": "cloud", "chunk": result.output}))
         elif result.error:
             print(f"[cloud] {result.error}", file=sys.stderr)
+    elif cloud_mode != "off":
+        log_event(logger, f"ask cloud_mode={cloud_mode} skipped trigger={top_score:.3f}/{threshold}")
 
     resp = build_response("cli", answer=answer, hits=hits, logs_ref=str(idx_path), cloud_hits=cloud_hits)
     console = Console()
@@ -159,9 +164,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--stdin", action="store_true", help="Read prompt from stdin")
     p_ask.add_argument("-k", type=int, default=5, help="Top-k results")
     p_ask.add_argument("--use-llm", action="store_true", help="Force local LLM generation (ollama)")
-    p_ask.add_argument("--cloud-mode", choices=["off", "always"], default="off", help="Call cloud CLI after local retrieval")
+    p_ask.add_argument("--cloud-mode", choices=["off", "auto", "always"], default="off", help="Call cloud CLI after local retrieval")
     p_ask.add_argument("--cloud-cmd", default=os.environ.get("CLOUD_CMD", ""), help="Cloud command template with {prompt} placeholder")
-    p_ask.set_defaults(func=lambda cfg, args: cmd_ask(cfg, read_prompt(args), args.k, use_llm=args.use_llm, cloud_mode=args.cloud_mode, cloud_cmd=args.cloud_cmd))
+    p_ask.add_argument("--cloud-threshold", type=float, default=None, help="Top score threshold for auto cloud hop (default from config)")
+    p_ask.set_defaults(func=lambda cfg, args: cmd_ask(cfg, read_prompt(args), args.k, use_llm=args.use_llm, cloud_mode=args.cloud_mode, cloud_cmd=args.cloud_cmd, cloud_threshold=args.cloud_threshold))
 
     add_plan_command(sub)
     add_supervise_command(sub)

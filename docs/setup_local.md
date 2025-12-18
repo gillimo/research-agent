@@ -30,7 +30,7 @@ ollama run phi3 "hi"  # quick smoke test
 Commands (current)
 - Researcher CLI: `python -m researcher status`, `python -m researcher ingest data/sample/readme.txt`, `echo "test" | python -m researcher ask --stdin`, `python -m researcher plan --stdin --run`, `python -m researcher nudge`.
 - Bridge (optional cloud hop): `$env:CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"' ; echo "question" | python scripts/researcher_bridge.py --stdin --cloud-mode always`
-- Inline cloud hop: `echo "prompt" | python -m researcher ask --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"` (sanitized, logs to `logs/cloud/`).
+- Inline cloud hop: `echo "prompt" | python -m researcher ask --stdin --cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3` (sanitized, logs to `logs/cloud/`; `--cloud-mode always` to force).
 - Default vector store uses FAISS; if HF model download fails or format mismatches, CLI falls back to SimpleIndex (`mock_index_path`). To avoid 401s, keep default embedding or provide HF auth for private models.
 - Logs: `logs/local.log` (rotating) captures ask/ingest/plan/nudge activity.
 

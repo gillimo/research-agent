@@ -6,7 +6,7 @@ Legend: [ ] pending, [~] in progress, [x] done
 1) [x] Wire cloud bridge stub (provider/env parsing, allowlist gate, log to logs/cloud/).  
 2) [x] Add cloud cmd execution helper with prompt templating + redaction hashes.  
 3) [x] Integrate cloud hop into `ask` behind `--cloud-mode` flag with provenance merge.  
-4) [ ] Add heuristic trigger for cloud hop (low top-k score threshold).  
+4) [x] Add heuristic trigger for cloud hop (low top-k score threshold).  
 5) [ ] Allow optional ingest of cloud snippets into index with provenance tag.  
 6) [ ] Expand supervisor loop to keep coding agents nudged (configurable prompts).  
 7) [ ] Add `martin.<ability>` dispatch (env.check, diagnose, plan.extract_commands, dev.create_file append-only).  
@@ -16,7 +16,7 @@ Legend: [ ] pending, [~] in progress, [x] done
 11) [x] Add cloud config doc section in `docs/setup_local.md` with env var names.  
 12) [x] Update README examples to show `--use-llm` and `--cloud-mode`.  
 13) [ ] Add sample cloud log fixture and test for redaction hashes.  
-14) [ ] Add test for provenance merge (local + synthetic cloud hit).  
+14) [x] Add test for provenance merge (local + synthetic cloud hit).  
 15) [ ] Add test for heuristic cloud trigger (score threshold).  
 16) [ ] Add config validation for index paths and create directories on load.  
 17) [ ] Add CLI option to skip FAISS and force SimpleIndex for offline runs.  

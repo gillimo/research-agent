@@ -14,7 +14,7 @@ Quick start (bridge + CLI)
 - Run from repo root: `echo "test prompt" | python scripts/researcher_bridge.py --stdin`.
 - To add cloud hop, set `CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"'` (or Gemini/llm) and pass `--cloud-mode always`.
 - Copy `.env.example` to `.env` and set `OPENAI_API_KEY` if you plan to run the Martin artifact or cloud hops.
-- Researcher CLI (FAISS default): `python -m researcher ingest data/sample/readme.txt`, then `echo "query" | python -m researcher ask --stdin` for local retrieval with provenance table; use `--use-llm` to force local LLM generation; add `--cloud-mode always --cloud-cmd "$env:CLOUD_CMD"` for a sanitized cloud hop; `python -m researcher plan --stdin` extracts `command:` lines, and `python -m researcher nudge` checks idle time.
+- Researcher CLI (FAISS default): `python -m researcher ingest data/sample/readme.txt`, then `echo "query" | python -m researcher ask --stdin` for local retrieval with provenance table; use `--use-llm` to force local LLM generation; add `--cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3` for a sanitized cloud hop (`always` to force); `python -m researcher plan --stdin` extracts `command:` lines, and `python -m researcher nudge` checks idle time.
 
 Project references
 - `PROJECT_PLAN.md`: milestones and open decisions.
