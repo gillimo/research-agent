@@ -11,6 +11,7 @@ except Exception:
 DEFAULT_CONFIG: Dict[str, Any] = {
     "local_model": "phi3",
     "ollama_host": "http://localhost:11434",
+    "local_llm_enabled": False,
     "embedding_model": "all-MiniLM-L6-v2",  # public HF model
     "vector_store": {"type": "faiss", "index_path": "data/index/faiss.index", "mock_index_path": "data/index/mock_index.pkl"},
     "data_paths": {

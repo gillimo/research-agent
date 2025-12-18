@@ -15,6 +15,7 @@ from researcher.provenance import build_response
 from researcher.answer import compose_answer
 from researcher.martin_behaviors import sanitize_and_extract, run_plan
 from researcher.supervisor import nudge_message
+from researcher.local_llm import run_ollama_chat
 
 
 def read_prompt(args: argparse.Namespace) -> str:
@@ -85,7 +86,7 @@ def cmd_ingest(cfg, paths: List[str]) -> int:
     return 0
 
 
-def cmd_ask(cfg, prompt: str, k: int) -> int:
+def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False) -> int:
     ensure_dirs(cfg)
     logger = setup_logger(Path(cfg.get("data_paths", {}).get("logs", "logs")) / "local.log")
     vs = cfg.get("vector_store", {}) or {}
@@ -95,6 +96,16 @@ def cmd_ask(cfg, prompt: str, k: int) -> int:
     hits = idx.search(sanitized, k=k)
     log_event(logger, f"ask k={k} hits={len(hits)} sanitized={changed}")
     answer = compose_answer(hits)
+    # Optional local LLM generation
+    llm_answer = None
+    if cfg.get("local_llm_enabled") or use_llm:
+        ctx = "\n".join([meta.get("chunk", "") for _, meta in hits][:3])
+        llm_prompt = f"Context:\n{ctx}\n\nUser question:\n{prompt}\n\nAnswer concisely. If no context, say so."
+        llm_answer = run_ollama_chat(cfg.get("local_model", "phi3"), llm_prompt, cfg.get("ollama_host", "http://localhost:11434"))
+        log_event(logger, f"ask llm_used={bool(llm_answer)}")
+        if llm_answer:
+            answer = llm_answer
+
     resp = build_response("cli", answer=answer, hits=hits, logs_ref=str(idx_path))
     console = Console()
     table = Table(title="Local Results")
@@ -124,7 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("prompt", nargs="*", help="Prompt text (or use --stdin)")
     p_ask.add_argument("--stdin", action="store_true", help="Read prompt from stdin")
     p_ask.add_argument("-k", type=int, default=5, help="Top-k results")
-    p_ask.set_defaults(func=lambda cfg, args: cmd_ask(cfg, read_prompt(args), args.k))
+    p_ask.add_argument("--use-llm", action="store_true", help="Force local LLM generation (ollama)")
+    p_ask.set_defaults(func=lambda cfg, args: cmd_ask(cfg, read_prompt(args), args.k, use_llm=args.use_llm))
 
     add_plan_command(sub)
     add_supervise_command(sub)
