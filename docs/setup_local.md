@@ -11,7 +11,7 @@ Prereqs
 Environment layout
 - Clone/open `C:\Users\gilli\OneDrive\Desktop\research_agent`.
 - Data dirs (create as needed): `data/raw`, `data/processed`, `data/index`, `logs`.
-- Config (planned): `config/local.yaml` for model/provider choices; secrets via env vars.
+- Config: `config/local.yaml` for model/provider choices; secrets via env vars.
 
 Suggested Python env
 ```powershell
@@ -27,14 +27,13 @@ ollama list           # should show phi3
 ollama run phi3 "hi"  # quick smoke test
 ```
 
-Planned commands (once implemented)
-- Current bridge: `echo "question" | python scripts/researcher_bridge.py --stdin`
-- Add cloud hop (example Codex): `$env:CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"' ; echo "question" | python scripts/researcher_bridge.py --stdin --cloud-mode always`
-- Researcher CLI (mock index now): `python -m researcher status`, `python -m researcher ingest data/sample/readme.txt`, `echo "test" | python -m researcher ask --stdin`
-- Default vector store uses FAISS; if HF model download fails, CLI falls back to SimpleIndex (`mock_index_path`). To avoid 401s, keep default embedding or provide HF auth for private models.
-- Logs: `logs/local.log` (rotating) captures ask/ingest activity.
+Commands (current)
+- Researcher CLI: `python -m researcher status`, `python -m researcher ingest data/sample/readme.txt`, `echo "test" | python -m researcher ask --stdin`, `python -m researcher plan --stdin --run`, `python -m researcher nudge`.
+- Bridge (optional cloud hop): `$env:CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"' ; echo "question" | python scripts/researcher_bridge.py --stdin --cloud-mode always`
+- Default vector store uses FAISS; if HF model download fails or format mismatches, CLI falls back to SimpleIndex (`mock_index_path`). To avoid 401s, keep default embedding or provide HF auth for private models.
+- Logs: `logs/local.log` (rotating) captures ask/ingest/plan/nudge activity.
 
 Notes
-- Embedding model/vector DB selection is still open; defaults will be set in `config/local.yaml`.
+- Embedding model/vector DB defaults are set in `config/local.yaml` (`all-MiniLM-L6-v2` + FAISS) with a SimpleIndex fallback.
 - Cloud credentials (e.g., `CLOUD_MODEL`, `CLOUD_API_KEY`) will be read from env; do not commit keys.
-- OPENAI_API_KEY is required for the Martin artifact (`martin_v1_4_7.py`) if you run it; keep it in `.env` (ignored by git).
+- OPENAI_API_KEY is required for the Martin artifact (`martin_v1_4_7.py`) or any cloud hop; keep it in `.env` (ignored by git).

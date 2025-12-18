@@ -9,17 +9,25 @@ Architecture (target)
 - Agent protocol: local agent handles user/tool requests; if it needs external info, it formulates a sanitized query to the cloud agent; cloud answers feed back into local RAG.
 - Tooling hook: expose a CLI/service interface so other tools (e.g., PoGo builder) can call the researcher behind a clean API/IPC.
 - Guardrails: prompt sanitization, allowlist of outbound queries, logging of cloud interactions.
+- UX parity: Martin-style command extraction/plan/diagnosis running locally with provenance-aware answers.
+
+Current state (2025-12-18)
+- CLI shipped: `ask`, `ingest`, `status`, `plan`, `nudge`; stdin-friendly and pipe-ready.
+- RAG online: FAISS + `all-MiniLM-L6-v2` embedding by default with SimpleIndex fallback; sample ingest/query working; 9 pytest cases green.
+- Safety: secrets moved to `.env` (gitignored); sanitized Martin v1.4.7 artifact for reference.
+- Observability: rotating local log at `logs/local.log`; provenance table in CLI outputs.
 
 MVP milestones
-1) Choose local model + embedding stack and stand up a simple RAG store with ingest/retrieval.
-2) Define the request/response schema between local and cloud agents; add sanitization rules.
-3) Build a CLI harness to issue queries and show provenance (local vs cloud).
-4) Add auto-RAG update triggers when confidence/recall is low.
-5) Document deployment/run steps and logging expectations.
+1) Choose local model + embedding stack and stand up a simple RAG store with ingest/retrieval. ✅
+2) Define the request/response schema between local and cloud agents; add sanitization rules. ✅
+3) Build a CLI harness to issue queries and show provenance (local vs cloud). ✅ (cloud path pending)
+4) Add auto-RAG update triggers when confidence/recall is low. ⏳
+5) Document deployment/run steps and logging expectations. ⏳ (refresh after cloud path)
+6) Add cloud librarian hop with sanitization + provenance and optional ingestion. ⏳
 
 Open decisions
-- Local model choice (size, hardware fit), embedding model, vector store.
 - Cloud provider/model and cost/latency constraints.
-- Sanitization policy and observability (what gets logged, redacted).
+- Sanitization policy refinements and observability (what gets logged, redacted) for cloud hops.
+- Auto-trigger thresholds for cloud queries and re-chunk/ingest.
 
 Signed: Codex (2025-12-18)
