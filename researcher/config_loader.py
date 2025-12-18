@@ -20,6 +20,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "index": "data/index",
         "logs": "logs",
     },
+    "cloud": {
+        "enabled": False,
+        "provider": "",
+        "model": "",
+        "cmd_template": "",
+    },
 }
 
 

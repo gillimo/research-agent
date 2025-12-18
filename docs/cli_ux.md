@@ -27,6 +27,7 @@ UX cues
 Optional cloud bridge (until integrated into `ask`)
 - `echo "prompt" | python scripts/researcher_bridge.py --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"`
 - Set `CLOUD_CMD` to your preferred CLI (e.g., codex/gemini/llm) that accepts `{prompt}`.
+- Inline cloud hop from CLI: `echo "prompt" | python -m researcher ask --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"` (sanitized, logged to `logs/cloud/cloud.log`).
 
 Notes
 - Secrets stay in `.env` (gitignored). `OPENAI_API_KEY` only needed for the Martin artifact or future cloud hop.

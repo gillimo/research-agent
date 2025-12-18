@@ -7,6 +7,7 @@ Summary
 - RAG stack: FAISS + `all-MiniLM-L6-v2` with SimpleIndex fallback; sample ingest/query working; sanitized Martin v1.4.7 artifact present.
 - Tests: `python -m pytest` → 9 passed.
 - UX doc: `docs/cli_ux.md` added with entry-point, flows, and output expectations.
+- Cloud hop: `ask` supports `--cloud-mode always --cloud-cmd "$env:CLOUD_CMD"` with sanitized prompt, hashed logging to `logs/cloud/`, and provenance table for cloud outputs.
 
 Next priorities
 1) Cloud librarian bridge with allowlist/sanitization + logging to `logs/cloud/`.

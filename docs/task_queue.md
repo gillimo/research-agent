@@ -3,9 +3,9 @@ Task Queue (batch of 25)
 
 Legend: [ ] pending, [~] in progress, [x] done
 
-1) [ ] Wire cloud bridge stub (provider/env parsing, allowlist gate, log to logs/cloud/).  
-2) [ ] Add cloud cmd execution helper with prompt templating + redaction hashes.  
-3) [ ] Integrate cloud hop into `ask` behind `--cloud-mode` flag with provenance merge.  
+1) [x] Wire cloud bridge stub (provider/env parsing, allowlist gate, log to logs/cloud/).  
+2) [x] Add cloud cmd execution helper with prompt templating + redaction hashes.  
+3) [x] Integrate cloud hop into `ask` behind `--cloud-mode` flag with provenance merge.  
 4) [ ] Add heuristic trigger for cloud hop (low top-k score threshold).  
 5) [ ] Allow optional ingest of cloud snippets into index with provenance tag.  
 6) [ ] Expand supervisor loop to keep coding agents nudged (configurable prompts).  
@@ -13,8 +13,8 @@ Legend: [ ] pending, [~] in progress, [x] done
 8) [ ] Expose abilities via CLI subcommand for testing (`python -m researcher abilities`).  
 9) [ ] Add idle detector to `nudge` using recent log timestamps and last command.  
 10) [ ] Enhance `plan --run` to separate stdout/stderr in logs and return non-zero on failure.  
-11) [ ] Add cloud config doc section in `docs/setup_local.md` with env var names.  
-12) [ ] Update README examples to show `--use-llm` and `--cloud-mode`.  
+11) [x] Add cloud config doc section in `docs/setup_local.md` with env var names.  
+12) [x] Update README examples to show `--use-llm` and `--cloud-mode`.  
 13) [ ] Add sample cloud log fixture and test for redaction hashes.  
 14) [ ] Add test for provenance merge (local + synthetic cloud hit).  
 15) [ ] Add test for heuristic cloud trigger (score threshold).  

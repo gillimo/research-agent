@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import List
@@ -16,6 +17,7 @@ from researcher.answer import compose_answer
 from researcher.martin_behaviors import sanitize_and_extract, run_plan
 from researcher.supervisor import nudge_message
 from researcher.local_llm import run_ollama_chat
+from researcher.cloud_bridge import call_cloud
 
 
 def read_prompt(args: argparse.Namespace) -> str:
@@ -86,7 +88,7 @@ def cmd_ingest(cfg, paths: List[str]) -> int:
     return 0
 
 
-def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False) -> int:
+def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "off", cloud_cmd: str = "") -> int:
     ensure_dirs(cfg)
     logger = setup_logger(Path(cfg.get("data_paths", {}).get("logs", "logs")) / "local.log")
     vs = cfg.get("vector_store", {}) or {}
@@ -96,6 +98,7 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False) -> int:
     hits = idx.search(sanitized, k=k)
     log_event(logger, f"ask k={k} hits={len(hits)} sanitized={changed}")
     answer = compose_answer(hits)
+    cloud_hits = []
     # Optional local LLM generation
     llm_answer = None
     if cfg.get("local_llm_enabled") or use_llm:
@@ -106,7 +109,19 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False) -> int:
         if llm_answer:
             answer = llm_answer
 
-    resp = build_response("cli", answer=answer, hits=hits, logs_ref=str(idx_path))
+    # Optional cloud hop
+    cloud_cfg = cfg.get("cloud", {}) or {}
+    effective_cloud_cmd = cloud_cmd or cloud_cfg.get("cmd_template") or os.environ.get("CLOUD_CMD", "")
+    if cloud_mode != "off":
+        cloud_logs_root = Path(cfg.get("data_paths", {}).get("logs", "logs")) / "cloud"
+        result = call_cloud(prompt, effective_cloud_cmd, cloud_logs_root)
+        log_event(logger, f"ask cloud_mode={cloud_mode} rc={result.rc} redacted={result.changed}")
+        if result.ok and result.output:
+            cloud_hits.append((0.0, {"path": "cloud", "chunk": result.output}))
+        elif result.error:
+            print(f"[cloud] {result.error}", file=sys.stderr)
+
+    resp = build_response("cli", answer=answer, hits=hits, logs_ref=str(idx_path), cloud_hits=cloud_hits)
     console = Console()
     table = Table(title="Local Results")
     table.add_column("score", style="cyan")
@@ -115,6 +130,14 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False) -> int:
     for entry in resp.provenance.get("local", []):
         table.add_row(f"{entry.score:.3f}", entry.source, entry.text[:80])
     console.print(table)
+    if resp.provenance.get("cloud"):
+        cloud_table = Table(title="Cloud Results")
+        cloud_table.add_column("score", style="cyan")
+        cloud_table.add_column("source", style="magenta")
+        cloud_table.add_column("chunk", style="white")
+        for entry in resp.provenance["cloud"]:
+            cloud_table.add_row(f"{entry.score:.3f}", entry.source, entry.text[:80])
+        console.print(cloud_table)
     if changed:
         print("[sanitized input used]", file=sys.stderr)
     return 0
@@ -136,7 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--stdin", action="store_true", help="Read prompt from stdin")
     p_ask.add_argument("-k", type=int, default=5, help="Top-k results")
     p_ask.add_argument("--use-llm", action="store_true", help="Force local LLM generation (ollama)")
-    p_ask.set_defaults(func=lambda cfg, args: cmd_ask(cfg, read_prompt(args), args.k, use_llm=args.use_llm))
+    p_ask.add_argument("--cloud-mode", choices=["off", "always"], default="off", help="Call cloud CLI after local retrieval")
+    p_ask.add_argument("--cloud-cmd", default=os.environ.get("CLOUD_CMD", ""), help="Cloud command template with {prompt} placeholder")
+    p_ask.set_defaults(func=lambda cfg, args: cmd_ask(cfg, read_prompt(args), args.k, use_llm=args.use_llm, cloud_mode=args.cloud_mode, cloud_cmd=args.cloud_cmd))
 
     add_plan_command(sub)
     add_supervise_command(sub)
