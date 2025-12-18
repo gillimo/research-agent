@@ -1,0 +1,25 @@
+# Local runtime and model defaults
+local_model: phi3
+ollama_host: http://localhost:11434
+
+# Embeddings + vector store (chosen for lightweight local use)
+# Default to public model to avoid auth issues; override if you have HF token.
+embedding_model: all-MiniLM-L6-v2
+vector_store:
+  type: faiss
+  index_path: data/index/faiss.index
+  mock_index_path: data/index/mock_index.pkl
+
+# Paths
+data_paths:
+  raw: data/raw
+  processed: data/processed
+  index: data/index
+  logs: logs
+
+# Cloud bridge (no secrets here; use env vars)
+cloud:
+  enabled: false
+  provider: ""          # e.g., "openai", "gemini"
+  model: ""             # e.g., "gpt-4o"
+  cmd_template: ""      # e.g., 'codex --model gpt-4o --prompt "{prompt}"'

@@ -1,0 +1,7 @@
+numpy
+pydantic
+pyyaml
+pytest
+rich
+faiss-cpu
+sentence-transformers

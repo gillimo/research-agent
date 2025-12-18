@@ -1,0 +1,8 @@
+.venv/
+.env
+.martin_state.json
+logs/
+data/index/
+data/processed/
+data/raw/
+__pycache__/
