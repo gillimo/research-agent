@@ -1,0 +1,47 @@
+{
+  "current_version": "0.1.0",
+  "session_count": 9,
+  "last_session": {
+    "started_at": "2025-12-19T16:32:07.558094Z",
+    "ended_at": "2025-12-19T16:32:33.131185Z",
+    "num_commands": 1,
+    "last_exit_code": 0,
+    "summary": {
+      "total_commands": 1,
+      "last_exit_code": 0
+    }
+  },
+  "platform": {
+    "system": "Unknown",
+    "release": "Unknown",
+    "python": "3.13.9"
+  },
+  "ledger": {
+    "entries": 514595,
+    "last_hash": "e9735de389512f8d35bd06480ab83bd028c62f95805c403d5f6d5f73af31843f"
+  },
+  "workspace": {
+    "path": "./workspace",
+    "last_file": ""
+  },
+  "session_memory": {
+    "transcript": [
+      "You: hi buddy",
+      "martin: Hi there! How can I assist you today?",
+      "You: can you see my onedrive desktop",
+      "martin: I can help you check your OneDrive Desktop. Let me list the files and folders there for you.\n\ncommand: dir \"C:\\Users\\gilli\\OneDrive\\Desktop\"",
+      "You: please navigate to the pogo teambuilder folder",
+      "martin: Let me handle that for you. I will navigate to the pogo teambuilder folder.\n\nPlease provide the full path to the pogo teambuilder folder if it's not located in the current directory. If you have a specific path in mind, let me know!",
+      "You: it is located in the same directory",
+      "martin: Let me list the files in your current directory to assist you. \n\ncommand: dir C:\\Users\\gilli"
+    ]
+  },
+  "last_plan": {
+    "steps": [
+      "dir C:\\Users\\gilli"
+    ],
+    "status": "complete",
+    "ok": 1,
+    "fail": 0
+  }
+}

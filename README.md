@@ -6,15 +6,48 @@ Two-agent system: a local "researcher" that owns the RAG store and a cloud assis
 Current stack
 - Local model runtime: Ollama, with `phi3` (mini / mini-128k) already installed in `C:\Users\gilli\.ollama`.
 - Embeddings/vector store: default `all-MiniLM-L6-v2` + FAISS index (`config/local.yaml`) with SimpleIndex fallback if model is unavailable.
-- Interface: local CLI `python -m researcher status|ingest|ask|plan|nudge` (pipe-friendly via `--stdin`, optional `--use-llm`), plus bridge at `scripts/researcher_bridge.py` to route through local then optional cloud CLI (Codex/Gemini/llm/etc.).
-- Artifact: sanitized Martin v1.4.7 reference at `martin_v1_4_7.py` (requires `OPENAI_API_KEY` in `.env`).
+- Interface: The `researcher` CLI now offers several subcommands for core functionality and an interactive `chat` mode. The `martin` launcher wraps `python -m researcher chat`.
+  - Core commands: `status`, `ingest`, `ask`, `plan`, `nudge`, `abilities`, `resources`, `resource`, `supervise`.
+  - Interactive chat: `python -m researcher chat` or `martin` (provides an interactive agent session).
+  - Cloud hops are integrated directly into `cmd_ask` and the interactive `chat` session based on configuration.
+- Artifact: Sanitized Martin v5.1 reference at `martin_v5_1_reference.py` (requires `OPENAI_API_KEY` in `.env` for direct use).
 
-Quick start (bridge + CLI)
+Quick start
 - Verify local model: `ollama list` should show `phi3`.
-- Run from repo root: `echo "test prompt" | python scripts/researcher_bridge.py --stdin`.
-- To add cloud hop, set `CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"'` (or Gemini/llm) and pass `--cloud-mode always`.
-- Copy `.env.example` to `.env` and set `OPENAI_API_KEY` if you plan to run the Martin artifact or cloud hops.
-- Researcher CLI (FAISS default): `python -m researcher ingest data/sample/readme.txt`, then `echo "query" | python -m researcher ask --stdin` for local retrieval with provenance table; use `--use-llm` to force local LLM generation; add `--cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3` for a sanitized cloud hop (`always` to force); `python -m researcher plan --stdin` extracts `command:` lines, and `python -m researcher nudge` checks idle time.
+- Copy `.env.example` to `.env` and set `OPENAI_API_KEY` if you plan to use OpenAI models or features derived from Martin.
+- **For Cloud integration:** Set `RESEARCHER_CLOUD_PROVIDER` (e.g., `openai`), `RESEARCHER_CLOUD_MODEL` (e.g., `gpt-4o`), and `RESEARCHER_CLOUD_API_KEY` (or reuse `OPENAI_API_KEY`) in your `.env` for cloud hops.
+- Cloud logs are written to `logs/cloud/cloud.ndjson` when cloud calls run.
+- **Researcher CLI usage:**
+  - `python -m researcher --version`: Print CLI version.
+  - `python -m researcher status [--json]`: Show config summary and current researcher state.
+  - `python -m researcher status --simple-index`: Force SimpleIndex (skip FAISS).
+  - `python -m researcher ingest data/sample/readme.txt [--json]`: Ingest documents into the local RAG.
+  - `python -m researcher ingest data/sample/readme.txt --simple-index`: Ingest with SimpleIndex only.
+  - `python -m researcher ingest data/sample --ext txt,md`: Ingest directories/globs with extension filtering.
+  - `echo "query" | python -m researcher ask --stdin [-k 5] [--use-llm] [--cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3] [--json]`: Ask the local index, with options for local LLM generation and cloud integration.
+  - `echo "query" | python -m researcher ask --stdin --simple-index`: Ask with SimpleIndex only.
+  - `python -m researcher plan --stdin [--run]`: Extract command plans and optionally run them.
+  - `python -m researcher nudge`: Check agent activity.
+  - `python -m researcher supervise --idle-seconds 300 --sleep-seconds 30`: Run a periodic supervisor loop.
+  - `python -m researcher abilities`: List internal abilities (or run one by name).
+  - `python -m researcher resources`: List readable resources under the repo root.
+  - `python -m researcher resource <path>`: Read a resource under the repo root.
+  - `python -m researcher abilities system.context`: Show safe system context data.
+  - `python -m researcher serve --host 127.0.0.1 --port 8088`: Start local HTTP service.
+  - `python -m researcher librarian status|start|shutdown`: Control the Librarian process.
+- **Interactive Chat Session:**
+  - `python -m researcher chat` or `martin`: Start a persistent interactive session with the researcher agent, leveraging Chef/Waiter orchestration, internal abilities, and smart command execution.
+  - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/context`, `/plan`, `/outputs`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+- **Auto-Update Configuration (in `config/local.yaml` or directly in code/env):**
+  - `auto_update.ingest_threshold`: Define a `top_score` threshold (e.g., `0.1`) below which local retrievals will log a suggestion for ingesting more data.
+  - `auto_update.ingest_cloud_answers`: Set to `true` to ingest successful cloud answers into the local RAG.
+  - `vector_store.warm_on_start`: Set to `true` to pre-load the index when entering chat mode.
+  - `rephraser.enabled`: Set to `true` to rephrase non-command chat replies.
+
+Utilities
+- `python scripts/ingest_demo.py`: Idempotent ingest demo (use `--simple-index` or `--no-clear` as needed).
+- `python scripts/log_question.py --text "..."`: Log blockers in `logs/questions.ndjson`.
+- `python scripts/legacy_import.py`: Scan for legacy PDFs and write a report to `docs/legacy_import_report.md`.
 
 Project references
 - `PROJECT_PLAN.md`: milestones and open decisions.

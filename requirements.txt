@@ -5,3 +5,5 @@ pytest
 rich
 faiss-cpu
 sentence-transformers
+requests
+tqdm

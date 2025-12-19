@@ -12,18 +12,19 @@ Architecture (target)
 - UX parity: Martin-style command extraction/plan/diagnosis running locally with provenance-aware answers.
 
 Current state (2025-12-18)
-- CLI shipped: `ask`, `ingest`, `status`, `plan`, `nudge`; stdin-friendly and pipe-ready.
-- RAG online: FAISS + `all-MiniLM-L6-v2` embedding by default with SimpleIndex fallback; sample ingest/query working; 9 pytest cases green.
+- CLI shipped: `ask`, `ingest`, `status`, `plan`, `nudge`, `abilities`, `supervise`; stdin-friendly and pipe-ready.
+- RAG online: FAISS + `all-MiniLM-L6-v2` embedding by default with SimpleIndex fallback; sample ingest/query working; tests extended.
 - Safety: secrets moved to `.env` (gitignored); sanitized Martin v1.4.7 artifact for reference.
-- Observability: rotating local log at `logs/local.log`; provenance table in CLI outputs.
+- Observability: rotating local log at `logs/local.log`; cloud logs at `logs/cloud/cloud.ndjson`; provenance table in CLI outputs.
+- Cloud path: Librarian IPC + cloud bridge integrated; optional ingest of cloud snippets.
 
 MVP milestones
 1) Choose local model + embedding stack and stand up a simple RAG store with ingest/retrieval. ✅
 2) Define the request/response schema between local and cloud agents; add sanitization rules. ✅
-3) Build a CLI harness to issue queries and show provenance (local vs cloud). ✅ (cloud path pending)
-4) Add auto-RAG update triggers when confidence/recall is low. ⏳
-5) Document deployment/run steps and logging expectations. ⏳ (refresh after cloud path)
-6) Add cloud librarian hop with sanitization + provenance and optional ingestion. ⏳
+3) Build a CLI harness to issue queries and show provenance (local vs cloud). ?
+4) Add auto-RAG update triggers when confidence/recall is low. ?
+5) Document deployment/run steps and logging expectations. ?
+6) Add cloud librarian hop with sanitization + provenance and optional ingestion. ?
 
 Open decisions
 - Cloud provider/model and cost/latency constraints.

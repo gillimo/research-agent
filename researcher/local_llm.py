@@ -1,10 +1,9 @@
 import json
 from typing import Optional
 
-import requests
-
 
 def run_ollama_chat(model: str, prompt: str, host: str = "http://localhost:11434") -> Optional[str]:
+    import requests
     url = f"{host.rstrip('/')}/api/chat"
     payload = {"model": model, "messages": [{"role": "user", "content": prompt}]}
     try:

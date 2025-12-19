@@ -9,6 +9,7 @@ vector_store:
   type: faiss
   index_path: data/index/faiss.index
   mock_index_path: data/index/mock_index.pkl
+  warm_on_start: false
 
 # Paths
 data_paths:
@@ -23,3 +24,45 @@ cloud:
   provider: ""          # e.g., "openai", "gemini"
   model: ""             # e.g., "gpt-4o"
   cmd_template: ""      # e.g., 'codex --model gpt-4o --prompt "{prompt}"'
+  trigger_score: 0.3
+  trigger_on_disagreement: true
+  trigger_on_low_confidence: true
+  low_confidence_threshold: 0.25
+  trigger_on_empty_or_decline: true
+  disagreement_phrases:
+    - "no"
+    - "nope"
+    - "not that"
+    - "not what i asked"
+    - "wrong"
+    - "that's wrong"
+    - "not correct"
+    - "doesn't help"
+    - "try again"
+    - "you're wrong"
+    - "that is wrong"
+    - "think hard"
+    - "think harder"
+    - "be precise"
+    - "be more precise"
+    - "give me a better answer"
+    - "not good enough"
+
+# Auto-update
+auto_update:
+  ingest_threshold: 0.1
+  ingest_cloud_answers: false
+
+# UX
+rephraser:
+  enabled: false
+
+# Execution controls
+execution:
+  approval_policy: on-request   # on-request|on-failure|never
+  sandbox_mode: workspace-write # read-only|workspace-write|full
+
+# Context harvesting
+context:
+  auto: false
+  max_recent: 10

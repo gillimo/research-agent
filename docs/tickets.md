@@ -3,6 +3,22 @@ Ticket Backlog (priority, deps, status)
 
 Legend: [ ] todo, [~] in progress, [x] done
 
+Next Priority Order
+1) CX2: Sandboxing modes (read-only/workspace-write/full) with enforcement
+2) CX1: Approval policy modes (on-request/on-failure/never) and per-command escalation
+3) CX7: Auto-context harvesting (git status, recent changes, repo summary)
+4) M5: Agent protocol file (`AGENTS.md`)
+5) CX4: Plan tool with explicit plan state tracking
+6) CX3: Command output summarization for long outputs
+7) CX6: Diff/patch preview workflow for edits
+8) CX6: Diff/patch preview workflow for edits
+9) CX5: Test/run helpers with suggested next steps
+10) CX9: Review mode heuristics (bugs/risks/tests focus)
+11) CX8: Resource/tool registry with list/read APIs
+12) CX10: Rich TUI input (autocomplete/history/slash suggestions)
+13) A2: Import legacy requirements (on hold)
+
+
 P0 – Safety/Secrets
 - [x] S1: Secret hygiene for legacy artifacts  
   Remove embedded keys; enforce env-only keys; rescan repo.  
@@ -33,45 +49,50 @@ P2 – Core local loop
   Standard log format, provenance tags, rotation/size limits; logs at `logs/local.log`.  
   Deps: C1, C2.
 
-P3 – Martin UX parity (local-first)
-- [~] M1: Port Martin behaviors to `researcher`  
+P3 ??" Martin UX parity (local-first)
+- [x] M1: Port Martin behaviors to `researcher`  
   Command-plan extraction, smart runner (non-interactive), diagnosis loop, progress summaries, rephraser toggle; pipe-friendly.  
   Deps: C1, C2, F2.
-- [ ] M2: Internal abilities  
+- [x] M2: Internal abilities  
   Implement `martin.<ability>` dispatch for env check, plan.extract_commands, dev.create_file (append-only), diagnose.  
   Deps: M1.
-- [~] M3: Agent oversight/prompting for coding agents  
+- [x] M3: Agent oversight/prompting for coding agents  
   Supervisor loop to monitor coding agents and keep prompting when idle/stopped (per docs), following guardrails; configurable prompts.  
   Deps: M1, C1.
-
+- [x] M4: System context provider (programmatic)  
+  Collect safe system info (OS, paths, user dirs, drives) via a dedicated ability/IPC for portability.  
+  Deps: M1.
+- [x] M5: Agent protocol file (`AGENTS.md`)  
+  Define Martin's operating rules and usage so tools can run him consistently.  
+  Deps: M1.
 P4 – Cloud librarian
-- [ ] L1: Cloud bridge with guardrails  
+- [x] L1: Cloud bridge with guardrails  
   Provider wrapper; sanitized prompts; outbound allowlist; structured logging to `logs/cloud/`.  
   Deps: F2.
-- [ ] L2: Cloud hop integration  
+- [x] L2: Cloud hop integration  
   Optional/heuristic cloud fetch; provenance tagging; optional ingest of cloud snippets into RAG.  
   Deps: L1, C2.
 
 P5 – Quality/automation
-- [ ] Q1: Auto-update triggers  
+- [x] Q1: Auto-update triggers  
   Confidence/recall heuristic to re-query cloud or re-chunk/ingest.  
   Deps: C2, L2.
-- [ ] Q2: Packaging/runtime setup  
+- [x] Q2: Packaging/runtime setup  
   `requirements.txt`/`pyproject`, venv bootstrap scripts, optional Windows launcher.  
   Deps: C1.
-- [ ] Q3: CI stub + test suite  
+- [x] Q3: CI stub + test suite  
   Run pytest; lint/format hooks; GitHub Actions placeholder.  
   Deps: F3, C1–C2.
-- [ ] Q4: Ingest tooling + sample data  
+- [x] Q4: Ingest tooling + sample data  
   Sample docs + scripted ingest demo; idempotent re-ingest.  
   Deps: C2.
-- [ ] Q5: Performance + caching  
+- [x] Q5: Performance + caching  
   Basic cache for repeated queries; timing stats in `status`; index warm/load toggle.  
   Deps: C2, L2.
-- [ ] Q6: Error handling + UX polish  
+- [x] Q6: Error handling + UX polish  
   Exit codes, clearer messages, redaction of sensitive errors; non-zero on failure.  
   Deps: C1, M1.
-- [ ] Q7: Documentation refresh  
+- [x] Q7: Documentation refresh  
   Update README/setup/examples to match shipped CLI and defaults.  
   Deps: C1–C3, M1–M2, L1–L2, Q1–Q6.
 
@@ -79,6 +100,23 @@ P6 – Legacy alignment
 - [x] A1: Capture sanitized Martin v1.4.7 artifact  
   Stored at `martin_v1_4_7.py`; requires `OPENAI_API_KEY` from env.  
   Deps: S1, S2.
-- [ ] A2: Import legacy requirements  
+- [~] A2: Import legacy requirements  
   Parse `AgentMartin_Operating_Manual.pdf` and `AgentMartin_Full_Ticket_Ledger.pdf`; add any missing behaviors to tickets.  
   Deps: none.
+
+P7 ? Codex CLI parity
+- [ ] CX1: Approval policy modes (on-request/on-failure/never) and per-command escalation
+- [ ] CX2: Sandboxing modes (read-only/workspace-write/full) with enforcement
+- [x] CX3: Command output summarization for long outputs
+- [x] CX4: Plan tool with explicit plan state tracking
+- [~] CX5: Test/run helpers with suggested next steps  
+  Added `/tests` slash command with repo-aware suggestions.
+- [~] CX6: Diff/patch preview workflow for edits  
+  Dev flow now shows unified diff preview and prompts for approval; env `MARTIN_AUTO_APPLY=1` or approval_policy=never auto-applies.
+- [x] CX7: Auto-context harvesting (git status, recent changes, repo summary)
+- [~] CX8: Resource/tool registry with list/read APIs  
+  Added `resources`/`resource` CLI + slash commands and internal abilities.
+- [~] CX9: Review mode heuristics (bugs/risks/tests focus)  
+  Heuristic review intent + review behavior guidance wired in orchestration/prompt.
+- [~] CX10: Rich TUI input (autocomplete/history/slash suggestions)  
+  Basic slash autocomplete via readline; full TUI/history still needed.

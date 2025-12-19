@@ -2,13 +2,24 @@ import pickle
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import faiss
+def _load_sentence_transformer():
+    # Lazy import to avoid heavy startup cost unless FAISS is used.
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer
+
+def _load_faiss():
+    # Lazy import to avoid heavy startup cost unless FAISS is used.
+    import faiss
+    return faiss
+
+def _load_numpy():
+    import numpy as np
+    return np
 
 
-def embed_text(text: str) -> np.ndarray:
+def embed_text(text: str) -> Any:
     """Naive embedding: normalized vector from character ordinals (deterministic, test-friendly)."""
+    np = _load_numpy()
     if not text:
         return np.zeros(16, dtype=float)
     vals = [ord(c) % 97 for c in text.lower() if c.isascii()]
@@ -28,7 +39,7 @@ class SimpleIndex:
     """Lightweight in-memory index for tests/dev; not a production vector store."""
 
     def __init__(self) -> None:
-        self.vectors: List[np.ndarray] = []
+        self.vectors: List[Any] = []
         self.meta: List[Dict[str, Any]] = []
 
     def add(self, text: str, meta: Dict[str, Any]) -> None:
@@ -38,6 +49,7 @@ class SimpleIndex:
     def search(self, query: str, k: int = 5) -> List[Tuple[float, Dict[str, Any]]]:
         if not self.vectors:
             return []
+        np = _load_numpy()
         qv = embed_text(query)
         scores = []
         for vec, meta in zip(self.vectors, self.meta):
@@ -72,21 +84,24 @@ class FaissIndex:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", index_path: Path = Path("data/index/faiss.index")) -> None:
         self.model_name = model_name
         self.index_path = index_path
-        self.model: Optional[SentenceTransformer] = None
-        self.index: Optional[faiss.IndexFlatIP] = None
+        self.model: Optional[Any] = None
+        self.index: Optional[Any] = None
         self.meta: List[Dict[str, Any]] = []
 
     def _ensure_model(self):
         if self.model is None:
+            SentenceTransformer = _load_sentence_transformer()
             self.model = SentenceTransformer(self.model_name)
 
     def _ensure_index(self, dim: int):
         if self.index is None:
+            faiss = _load_faiss()
             self.index = faiss.IndexFlatIP(dim)
 
     def add(self, texts: List[str], metas: List[Dict[str, Any]]) -> None:
         if not texts:
             return
+        np = _load_numpy()
         self._ensure_model()
         embeddings = self.model.encode(texts, normalize_embeddings=True)
         self._ensure_index(embeddings.shape[1])
@@ -109,6 +124,7 @@ class FaissIndex:
     def save(self) -> None:
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         if self.index is not None:
+            faiss = _load_faiss()
             faiss.write_index(self.index, str(self.index_path))
         meta_path = self.index_path.with_suffix(".meta.pkl")
         with meta_path.open("wb") as f:
@@ -120,6 +136,7 @@ class FaissIndex:
         meta_path = index_path.with_suffix(".meta.pkl")
         if index_path.exists():
             try:
+                faiss = _load_faiss()
                 obj.index = faiss.read_index(str(index_path))
             except Exception:
                 obj.index = None

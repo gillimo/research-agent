@@ -1,0 +1,1 @@
+{"entry":{"ts":"2025-12-18T12:00:00Z","version":"0.1.0","event":"cloud_call_start","data":{"hash":"31a2d59021da654a8c92347fa4aa3d455bac7350d329c5f7663265547befcde3","redacted":true,"provider":"openai","model":"gpt-4o","sanitized":"example [REDACTED_KEY]"}},"prev_hash":null,"hash":"0000000000000000000000000000000000000000000000000000000000000000"}
