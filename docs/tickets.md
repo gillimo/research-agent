@@ -4,8 +4,10 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) G4V: Verify host bootstrap script on clean machine
-2) G5V: Verify service script on clean machine
+1) UAT14: Fix missing loop_ready event in socket runs
+2) UAT15: Ensure context summary appears before first input in socket runs
+3) G4V: Verify host bootstrap script on clean machine
+4) G5V: Verify service script on clean machine
 
 
 P0 – Safety/Secrets
@@ -689,6 +691,12 @@ P20 ? UAT harness stability
 - [x] UAT13: Snapshot capture for UX review  
   Add `screenshot_dir` to write per-step output snapshots (tail) for quick UX review.  
   Acceptance: scenarios emit `logs/uat_snapshots/step_*.txt`.
+- [ ] UAT14: Loop readiness event reliability  
+  Ensure `loop_ready` is emitted before steps begin in socket UAT.  
+  Acceptance: harness receives `loop_ready` without timeouts.
+- [ ] UAT15: Context summary gating  
+  Ensure `martin: Context:` appears before first input in socket UAT.  
+  Acceptance: scenarios can wait for the context summary without timing out.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
