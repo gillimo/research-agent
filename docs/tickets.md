@@ -761,6 +761,9 @@ P20 ? UAT harness stability
 - [x] UAT37: Consume conditional matches  
   Track baseline and consumed counts for prompt tokens so repeated prompts can be handled in order.  
   Acceptance: multiple `input_when_text` entries for the same token no longer fire on the first prompt.
+- [x] UAT38: Avoid double-counting prompt tokens  
+  Prefer prompt event text over output buffer when counting `input_when_text` occurrences.  
+  Acceptance: duplicate conditional inputs stop firing on a single prompt.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

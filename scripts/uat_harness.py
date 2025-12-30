@@ -340,18 +340,16 @@ def main() -> int:
     def _count_text_matches(token: str) -> int:
         if not token:
             return 0
-        with output_lock:
-            blob = "".join(output_buffer)
-        count = blob.count(token)
         prompt_texts: List[str] = []
         with event_lock:
             for payload in event_buffer:
                 if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
                     prompt_texts.append(payload.get("text") or "")
-        for text in prompt_texts:
-            if token in text:
-                count += text.count(token)
-        return count
+        if prompt_texts:
+            return sum(text.count(token) for text in prompt_texts)
+        with output_lock:
+            blob = "".join(output_buffer)
+        return blob.count(token)
 
     def _count_event_matches(token: str) -> int:
         if not token:
