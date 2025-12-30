@@ -1,0 +1,41 @@
+{
+  "env": {
+    "MARTIN_LOG_STDOUT": "1"
+  },
+  "auto_wait": true,
+  "use_socket": true,
+  "socket_token": "uat-token",
+  "mailbox": true,
+  "mailbox_log": "logs/uat_mailbox.ndjson",
+  "steps": [
+    {
+      "wait_for_event": "loop_ready",
+      "timeout": 10
+    },
+    {
+      "input": "/agent on",
+      "input_timeout": 15
+    },
+    {
+      "wait_for_event": "prompt",
+      "timeout": 10
+    },
+    {
+      "input": "i want you to investigate this folder and tell me about the project",
+      "input_timeout": 15
+    },
+    {
+      "wait_for_event": "prompt",
+      "timeout": 10
+    },
+    {
+      "input": "what should we do next?",
+      "input_timeout": 15
+    },
+    {
+      "wait_for": "Approve running",
+      "input": "no",
+      "input_timeout": 10
+    }
+  ]
+}

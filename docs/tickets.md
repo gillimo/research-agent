@@ -4,10 +4,9 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) UAT9: Add event-based waits to socket harness scenarios
-2) UAT8: Add parity check for test socket mode (no behavior changes)
-3) G4V: Verify host bootstrap script on clean machine
-4) G5V: Verify service script on clean machine
+1) UAT8: Add parity check for test socket mode (no behavior changes)
+2) G4V: Verify host bootstrap script on clean machine
+3) G5V: Verify service script on clean machine
 
 
 P0 – Safety/Secrets
@@ -679,6 +678,9 @@ P20 ? UAT harness stability
 - [x] UAT9: Event-based waits for socket harness  
   Add `wait_for_event` support so scenarios can wait for prompt/input events instead of text.  
   Acceptance: harness can wait for `prompt` or `input_used` events in socket mode.
+- [x] UAT10: Update socket scenarios to wait for prompt events  
+  Add `wait_for_event` for `loop_ready` and `prompt` before sending inputs.  
+  Acceptance: scenarios no longer race and are stable in socket mode.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

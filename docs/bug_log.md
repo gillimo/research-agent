@@ -6,6 +6,7 @@ Bug Log
 - 2025-12-30: Mailbox mode needed to avoid blocking waits and exit after a short window; harness now skips waits and auto-quits after `mailbox_duration`.
 - 2025-12-30: Test socket mode skipped context auto-surface and initial context harvest, creating behavior differences; removed the test-only bypass so behavior matches real sessions.
 - 2025-12-30: UAT harness could only wait on text output, making socket tests brittle; added event-based waits (`wait_for_event`) to align with prompt/input events.
+- 2025-12-30: UAT socket scenarios sent inputs before loop readiness, causing racey runs; updated scenarios to wait for `loop_ready`/`prompt` events.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
