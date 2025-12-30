@@ -827,6 +827,9 @@ P20 ? UAT harness stability
 - [x] UAT59: Advance prompt cursor on initial approval  
   Use prompt-event waits for the first approval so later waits don’t match stale prompts.  
   Acceptance: follow-up questions wait for the correct approval prompt.
+- [x] UAT60: Unit test prompt-text waits  
+  Add coverage for `_wait_for_prompt_text` in the harness tests.  
+  Acceptance: test passes with ANSI-colored prompt events.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
