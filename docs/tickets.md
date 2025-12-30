@@ -821,6 +821,12 @@ P20 ? UAT harness stability
 - [x] UAT57: Prompt-text waits  
   Allow steps to wait for specific prompt text using prompt events.  
   Acceptance: scenarios can wait on "You:" or approval prompts without stdout scraping.
+- [x] UAT58: Update scenarios to prompt waits  
+  Replace stdout-based prompt waits with `wait_for_prompt` in default UAT scenarios.  
+  Acceptance: scenarios rely on prompt events for readiness checks.
+- [x] UAT59: Advance prompt cursor on initial approval  
+  Use prompt-event waits for the first approval so later waits don’t match stale prompts.  
+  Acceptance: follow-up questions wait for the correct approval prompt.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

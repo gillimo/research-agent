@@ -22,7 +22,7 @@
       "input_timeout": 15
     },
     {
-      "wait_for": "Approve running",
+      "wait_for_prompt": "Approve running",
       "timeout": 30
     },
     {
@@ -45,7 +45,7 @@
       "timeout": 180
     },
     {
-      "wait_for_event": "prompt",
+      "wait_for_prompt": "You:",
       "timeout": 120
     },
     {
@@ -54,7 +54,7 @@
       "input_when_prompt": "You:"
     },
     {
-      "wait_for": "Approve running",
+      "wait_for_prompt": "Approve running",
       "timeout": 60
     },
     {
@@ -63,7 +63,7 @@
       "input_when_prompt": "Approve running"
     },
     {
-      "wait_for_event": "prompt",
+      "wait_for_prompt": "You:",
       "timeout": 120
     },
     {
@@ -72,7 +72,7 @@
       "input_when_prompt": "You:"
     },
     {
-      "wait_for": "Approve running",
+      "wait_for_prompt": "Approve running",
       "timeout": 60
     },
     {
