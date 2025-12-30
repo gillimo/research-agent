@@ -64,6 +64,7 @@ Bug Log
 - 2025-12-30: Prompt-text wait multi-token behavior lacked coverage; add a test to assert any-token matching.
 - 2025-12-30: Heartbeat messages rendered in the main worklog panel; move a heartbeat summary below the main output in TUI.
 - 2025-12-30: Expected behavior doc did not explicitly cover task queueing/chaining parity; add explicit behavior expectations.
+- 2025-12-30: Remaining required verification is clean-machine validation for G4V/G5V (install/service scripts).
 - 2025-12-30: Expected behavior doc missing explicit Codex parity behaviors; add a dedicated section and inventory line.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
