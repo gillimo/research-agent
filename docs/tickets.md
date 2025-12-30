@@ -710,6 +710,9 @@ P20 ? UAT harness stability
 - [x] UAT20: Suppress redundant loop_ready warning  
   Skip the initial loop_ready warning when the scenario already waits for `loop_ready`.  
   Acceptance: socket runs avoid duplicate warnings when scenarios include the wait.
+- [x] UAT21: Scenario approval ordering  
+  Ensure socket scenarios respond to approval prompts before sending follow-up questions.  
+  Acceptance: "Approve running" is answered before the next user input is sent.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

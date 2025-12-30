@@ -30,17 +30,20 @@
       "input_timeout": 15
     },
     {
+      "wait_for": "Approve running",
+      "timeout": 30
+    },
+    {
+      "input": "no",
+      "input_timeout": 10
+    },
+    {
       "wait_for_event": "prompt",
       "timeout": 30
     },
     {
       "input": "what should we do next?",
       "input_timeout": 15
-    },
-    {
-      "wait_for": "Approve running",
-      "input": "no",
-      "input_timeout": 10
     }
   ]
 }
