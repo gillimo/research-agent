@@ -7,6 +7,8 @@ Prereqs
 - Python 3.11+ recommended for the CLI/service (will add requirements once code lands).
 - Secrets/config: copy `.env.example` to `.env` and set `OPENAI_API_KEY` (required for Martin artifact/cloud), `MARTIN_MODEL_MAIN`, `MARTIN_MODEL_MINI` as needed.
 - Optional: Hugging Face token only if you switch to gated embedding models; default embedding is public (`all-MiniLM-L6-v2`).
+- Local-only mode: set `local_only: true` in `config/local.yaml` or `RESEARCHER_LOCAL_ONLY=1` to block all cloud calls.
+- Auto source discovery: set `auto_update.sources_on_gap: true` to request Librarian source suggestions on low-confidence queries.
 
 Environment layout
 - Clone/open `C:\Users\gilli\OneDrive\Desktop\research_agent`.
@@ -37,7 +39,8 @@ Commands (current)
 - Logs: `logs/local.log` (rotating) captures ask/ingest/plan/nudge activity.
  - Cloud logs: `logs/cloud/cloud.ndjson` captures cloud call events (hashes/redaction flags).
  - Supervisor loop: `python -m researcher supervise --idle-seconds 300 --sleep-seconds 30` to emit idle prompts.
- - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/context`, `/plan`, `/outputs`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+- Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/context [refresh]`, `/plan`, `/outputs`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+- Additional: `/export session <path>`, `/resume`, `/rag status`, `/tasks add|list|done <n>`, `/review on|off`, `/librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>`.
 
 Notes
 - Embedding model/vector DB defaults are set in `config/local.yaml` (`all-MiniLM-L6-v2` + FAISS) with a SimpleIndex fallback.

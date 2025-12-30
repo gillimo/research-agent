@@ -1,6 +1,7 @@
 .venv/
 .env
 .martin_state.json
+.researcher_state.json
 logs/
 data/index/
 data/processed/

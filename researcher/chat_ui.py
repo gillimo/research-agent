@@ -133,51 +133,64 @@ def shorten_output(text: str, max_len: int = 400) -> str:
     return s[:max_len].rstrip() + "..."
 
 
-def render_palette(query: str, slash_commands: List[str], command_descriptions: Dict[str, str], session_transcript: List[str]) -> None:
+def build_palette_entries(query: str, slash_commands: List[str], session_transcript: List[str]) -> List[tuple[str, str]]:
     cmd_matches = [c for c in slash_commands if _fuzzy_match(query, c.lower())]
     history_inputs = [ln for ln in session_transcript if ln.startswith("You: ")]
     if query:
         hist_matches = [ln for ln in history_inputs if query in ln.lower()]
     else:
         hist_matches = history_inputs[-10:]
+    entries: List[tuple[str, str]] = []
+    for c in cmd_matches[:20]:
+        entries.append(("cmd", c))
+    for ln in hist_matches[-10:]:
+        entries.append(("input", ln))
+    return entries
+
+
+def render_palette(query: str, slash_commands: List[str], command_descriptions: Dict[str, str], session_transcript: List[str]) -> List[tuple[str, str]]:
+    entries = build_palette_entries(query, slash_commands, session_transcript)
     try:
         from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
         console = Console()
         panels = []
-        if cmd_matches:
+        cmd_entries = [e for e in entries if e[0] == "cmd"]
+        input_entries = [e for e in entries if e[0] == "input"]
+        if cmd_entries:
             table = Table(title="Commands", show_header=True, header_style="cyan")
+            table.add_column("#", style="dim", width=4)
             table.add_column("cmd", style="white")
             table.add_column("desc", style="dim")
-            for c in cmd_matches[:20]:
-                table.add_row(c, command_descriptions.get(c, ""))
+            for idx, (_kind, cmd) in enumerate(cmd_entries, 1):
+                table.add_row(str(idx), cmd, command_descriptions.get(cmd, ""))
             panels.append(Panel(table, title="Palette"))
-        if hist_matches:
-            table = Table(title="Recent inputs", show_header=False)
+        if input_entries:
+            table = Table(title="Recent inputs", show_header=True, header_style="cyan")
+            table.add_column("#", style="dim", width=4)
             table.add_column("input", style="white")
-            for ln in hist_matches[-10:]:
-                table.add_row(ln)
+            for idx, (_kind, ln) in enumerate(input_entries, 1):
+                table.add_row(str(idx + len(cmd_entries)), ln)
             panels.append(Panel(table, title="History"))
         if panels:
             for p in panels:
                 console.print(p)
-            return
+            return entries
     except Exception:
         pass
     print("martin: Command palette")
-    if cmd_matches:
-        print("Commands:")
-        for c in cmd_matches[:20]:
-            desc = command_descriptions.get(c, "")
-            suffix = f" - {desc}" if desc else ""
-            print(f"- {c}{suffix}")
-    if hist_matches:
-        print("Recent inputs:")
-        for ln in hist_matches[-10:]:
-            print(ln)
-    if not cmd_matches and not hist_matches:
+    if entries:
+        for idx, (kind, value) in enumerate(entries, 1):
+            if kind == "cmd":
+                desc = command_descriptions.get(value, "")
+                suffix = f" - {desc}" if desc else ""
+                print(f"{idx}. {value}{suffix}")
+            else:
+                print(f"{idx}. {value}")
+    else:
         print("martin: No matches.")
+    return entries
 
 
 def render_history(lines: List[str], title: str = "Recent input history") -> None:

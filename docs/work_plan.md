@@ -2,17 +2,24 @@ Work Plan (immediate)
 =====================
 
 Current focus (sequence)
-1) L1: Cloud librarian bridge with sanitization + allowlist; add cloud logging to `logs/cloud/` and env-driven model/provider settings.
-2) L2: Cloud hop integration into `ask` (merge provenance/confidence; optional ingest of snippets) with toggle/heuristic trigger.
-3) M2: Internal abilities surface (env.check, diagnose, plan.extract_commands, dev.create_file append-only) and stronger supervisor loop to keep coding agents on-task.
-4) M3: Agent oversight/keep-alive prompts tuned for coding agents; configurable prompt sets and idle thresholds.
-5) Q7: Documentation refresh + demos once cloud path lands.
+1) Maintain Codex parity features and address any regressions.
+2) Expand Librarian-driven RAG updates (sources discovery + approval pipeline).
+3) Improve task queue automation and reminders.
+
+Next 5 tickets (priority order)
+1) CX10: Rich TUI input (finish richer panels)
+2) CX32: Context refresh shortcuts + context-on-start UX (verify + docs)
+3) CX31: Fix-command review parity (verify + tests)
+4) CX5: Test/run helpers (audit coverage + polish)
+5) CX6: Diff/patch preview workflow (audit coverage + polish)
 
 Test strategy (applied)
 - Pytest fixtures for sample docs and fake env vars; mock cloud calls for offline runs.
 - Validate request/response schemas and allowlist/redaction functions.
 - Offline ingest/retrieve smoke: sample doc -> index -> top-k with sources.
 - CLI argv/stdin coverage for `ask`, `ingest`, `plan`, and `nudge` (without real model execution).
+- Add unit coverage for command safety classifier and sandbox enforcement.
+- Add ledger export tests and session resume tests (no secrets in snapshots).
 
 Env/secrets
 - Require `OPENAI_API_KEY` in `.env` (gitignored) for Martin artifact or cloud paths; no keys in repo.

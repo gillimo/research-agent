@@ -543,6 +543,7 @@ def cmd_chat(cfg, args) -> int:
         session_transcript = []
         slash_commands = chat_ui.get_slash_commands()
         command_descriptions = chat_ui.get_command_descriptions()
+        last_palette_entries = []
         context_cache = {}
         # Load persisted memory (best-effort).
         mem = st.get("memory", {}) if isinstance(st, dict) else {}
@@ -711,7 +712,30 @@ def cmd_chat(cfg, args) -> int:
                     return True
                 if name == "palette":
                     query = " ".join(args).strip().lower()
-                    chat_ui.render_palette(query, slash_commands, command_descriptions, session_transcript)
+                    if args and args[0].lower() == "pick":
+                        try:
+                            idx = int(args[1]) if len(args) > 1 else 0
+                        except Exception:
+                            idx = 0
+                        entries = last_palette_entries
+                        if not entries:
+                            entries = chat_ui.render_palette("", slash_commands, command_descriptions, session_transcript)
+                            last_palette_entries = entries
+                        if not (1 <= idx <= len(entries)):
+                            print("martin: Use /palette pick <n> from the last palette view.")
+                            return True
+                        kind, value = entries[idx - 1]
+                        if kind == "cmd":
+                            print(f"martin: Picked command: {value}")
+                            print("martin: Paste it or press Up arrow to reuse.")
+                            last_user_request = value
+                        else:
+                            picked = value.replace("You: ", "", 1)
+                            last_user_request = picked
+                            print(f"martin: Picked input: {value}")
+                            print("martin: Press Up arrow to edit/reuse.")
+                        return True
+                    last_palette_entries = chat_ui.render_palette(query, slash_commands, command_descriptions, session_transcript)
                     return True
                 if name == "plan":
                     st = load_state()

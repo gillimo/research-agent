@@ -43,6 +43,18 @@ Components
 - Guardrails: prompt sanitization, PII/proprietary redaction rules (implemented in `sanitize.py` and enforced by `cloud_bridge.py`), outbound allowlist, structured logging for every cloud call, provenance tags on answers.
 - Cloud call logs: `logs/cloud/cloud.ndjson` (event-based entries with hashes and redaction flags).
 
+Operational UX (Codex parity targets)
+- **Execution controller**: enforces approval policy + sandbox mode; integrates command safety classifier for risky actions.
+- **Agent mode**: `/agent on` auto-approves commands and fix steps, overriding interactive confirmations even when approval_policy is `on-request`.
+- **Session manager**: persists chat state (plans, approvals, context refs) and supports resume.
+- **Tool execution ledger**: structured, redacted record of tool calls and outputs for audit/export.
+- **Diff UX**: unified/side-by-side diff viewer with paging, tied to edit workflow.
+- **Context pack**: repo-aware summary (tree, tech stack, recent changes) with redaction and refresh.
+- **Task queue**: persisted tasks with next-action prompts and idle reminders.
+- **Local-only mode**: hard block on cloud calls with explicit warnings when cloud config is set.
+- **Diagnostics**: Librarian health checks (socket ping, last error, cloud connectivity).
+- **Librarian inbox**: background RAG notes and gap prompts surfaced to Martin for approve/ingest.
+
 Storage/layout (proposed)
 - `data/raw/`           incoming documents
 - `data/processed/`     cleaned/chunked docs

@@ -3,7 +3,7 @@ CLI UX Guide
 
 Entry point
 - Run from repo root with Python: `python -m researcher <command> [options]`.
-- Commands: `status`, `ingest`, `ask`, `plan`, `nudge`.
+- Commands: `status`, `ingest`, `ask`, `plan`, `nudge`, `chat`.
 - Pipe-friendly: add `--stdin` to read prompt text from standard input.
 
 Recommended flow
@@ -17,17 +17,20 @@ Recommended flow
    Shows sanitized prompt, extracted plan, and per-command status/output.
 5) Nudge/oversight: `python -m researcher nudge [--idle-seconds 300]`  
    Emits a nudge if logs show idleness beyond the threshold.
+6) Interactive chat: `python -m researcher chat`  
+   Slash commands include `/history`, `/palette [pick <n>]`, and `/context refresh`.
 
 UX cues
 - Tables use Rich for readable columns and headers.
 - `ask` output shows provenance first (local hits), then stderr notes if sanitization altered input.
 - `plan --run` reports `OK`/`FAIL(code)` per command with captured stdout/stderr.
+- Dev flow previews diffs before applying generated code changes.
 - Logs for all commands go to `logs/local.log` (rotating).
 
 Optional cloud bridge (until integrated into `ask`)
 - `echo "prompt" | python scripts/researcher_bridge.py --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"`
 - Set `CLOUD_CMD` to your preferred CLI (e.g., codex/gemini/llm) that accepts `{prompt}`.
-- Inline cloud hop from CLI: `echo "prompt" | python -m researcher ask --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"` (sanitized, logged to `logs/cloud/cloud.log`).
+- Inline cloud hop from CLI: `echo "prompt" | python -m researcher ask --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"` (sanitized, logged to `logs/cloud/cloud.ndjson`).
 
 Notes
 - Secrets stay in `.env` (gitignored). `OPENAI_API_KEY` only needed for the Martin artifact or future cloud hop.

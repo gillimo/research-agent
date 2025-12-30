@@ -52,6 +52,7 @@ cloud:
 auto_update:
   ingest_threshold: 0.1
   ingest_cloud_answers: false
+  sources_on_gap: true
 
 # UX
 rephraser:
@@ -61,8 +62,18 @@ rephraser:
 execution:
   approval_policy: on-request   # on-request|on-failure|never
   sandbox_mode: workspace-write # read-only|workspace-write|full
+  command_allowlist: []
+  command_denylist: []
+
+# Local-only mode (blocks all cloud calls)
+local_only: false
 
 # Context harvesting
 context:
   auto: false
   max_recent: 10
+
+# Direct socket server for bi-directional communication
+socket_server:
+  host: "127.0.0.1"
+  port: 6001

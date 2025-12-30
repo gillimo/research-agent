@@ -16,6 +16,8 @@ Quick start
 - Verify local model: `ollama list` should show `phi3`.
 - Copy `.env.example` to `.env` and set `OPENAI_API_KEY` if you plan to use OpenAI models or features derived from Martin.
 - **For Cloud integration:** Set `RESEARCHER_CLOUD_PROVIDER` (e.g., `openai`), `RESEARCHER_CLOUD_MODEL` (e.g., `gpt-4o`), and `RESEARCHER_CLOUD_API_KEY` (or reuse `OPENAI_API_KEY`) in your `.env` for cloud hops.
+- **Local-only mode:** Set `local_only: true` in `config/local.yaml` (or `RESEARCHER_LOCAL_ONLY=1`) to disable all cloud calls.
+- **Auto source discovery:** `auto_update.sources_on_gap: true` triggers Librarian source suggestions on low-confidence queries.
 - Cloud logs are written to `logs/cloud/cloud.ndjson` when cloud calls run.
 - **Researcher CLI usage:**
   - `python -m researcher --version`: Print CLI version.
@@ -37,7 +39,7 @@ Quick start
   - `python -m researcher librarian status|start|shutdown`: Control the Librarian process.
 - **Interactive Chat Session:**
   - `python -m researcher chat` or `martin`: Start a persistent interactive session with the researcher agent, leveraging Chef/Waiter orchestration, internal abilities, and smart command execution.
-  - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/context`, `/plan`, `/outputs`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+  - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/context [refresh]`, `/plan`, `/outputs`, `/export session <path>`, `/resume`, `/rag status`, `/tasks add|list|done <n>`, `/review on|off`, `/librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
 - **Auto-Update Configuration (in `config/local.yaml` or directly in code/env):**
   - `auto_update.ingest_threshold`: Define a `top_score` threshold (e.g., `0.1`) below which local retrievals will log a suggestion for ingesting more data.
   - `auto_update.ingest_cloud_answers`: Set to `true` to ingest successful cloud answers into the local RAG.
@@ -53,4 +55,4 @@ Project references
 - `PROJECT_PLAN.md`: milestones and open decisions.
 - `docs/architecture.md`: system diagram, data flow, and guardrails.
 - `docs/setup_local.md`: local setup, model/embedding notes, and run commands.
-- `docs/tickets.md`: initial ticket backlog to implement the MVP.
+- `docs/tickets.md`: ticket backlog including Codex parity audit (CX11-CX20).

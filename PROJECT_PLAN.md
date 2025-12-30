@@ -11,12 +11,14 @@ Architecture (target)
 - Guardrails: prompt sanitization, allowlist of outbound queries, logging of cloud interactions.
 - UX parity: Martin-style command extraction/plan/diagnosis running locally with provenance-aware answers.
 
-Current state (2025-12-18)
+Current state (2025-12-29)
 - CLI shipped: `ask`, `ingest`, `status`, `plan`, `nudge`, `abilities`, `supervise`; stdin-friendly and pipe-ready.
 - RAG online: FAISS + `all-MiniLM-L6-v2` embedding by default with SimpleIndex fallback; sample ingest/query working; tests extended.
 - Safety: secrets moved to `.env` (gitignored); sanitized Martin v1.4.7 artifact for reference.
 - Observability: rotating local log at `logs/local.log`; cloud logs at `logs/cloud/cloud.ndjson`; provenance table in CLI outputs.
 - Cloud path: Librarian IPC + cloud bridge integrated; optional ingest of cloud snippets.
+- Codex parity audit complete; CX11-CX20 added for persistence, execution ledger, safety gates, diff UX, and local-only hardening.
+- Librarian-driven RAG loop: gap signals and inbox-driven updates wired; local-only guardrails in place; review/task/ledger/export UX shipped.
 
 MVP milestones
 1) Choose local model + embedding stack and stand up a simple RAG store with ingest/retrieval. ✅
@@ -25,10 +27,13 @@ MVP milestones
 4) Add auto-RAG update triggers when confidence/recall is low. ?
 5) Document deployment/run steps and logging expectations. ?
 6) Add cloud librarian hop with sanitization + provenance and optional ingestion. ?
+7) Reach Codex CLI parity for session persistence, execution ledger, safety, diff UX, and local-only mode. ?
 
 Open decisions
 - Cloud provider/model and cost/latency constraints.
 - Sanitization policy refinements and observability (what gets logged, redacted) for cloud hops.
 - Auto-trigger thresholds for cloud queries and re-chunk/ingest.
+- Retention policy for tool execution ledger and session snapshots.
+- Default posture for local-only mode (opt-in vs opt-out).
 
 Signed: Codex (2025-12-18)
