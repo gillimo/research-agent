@@ -695,6 +695,9 @@ P20 ? UAT harness stability
 - [x] UAT15: Context summary gating  
   Ensure `martin: Context:` appears before first input in socket UAT.  
   Acceptance: scenarios can wait for the context summary without timing out.
+- [x] UAT16: Clear socket read timeout  
+  Disable the 1s socket timeout after connect to avoid dropping event streams.  
+  Acceptance: socket output events continue beyond the initial ping/pong.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

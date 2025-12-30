@@ -319,6 +319,10 @@ def main() -> int:
         while time.time() < deadline:
             try:
                 socket_conn = socket.create_connection((args.socket_host, args.socket_port), timeout=1.0)
+                try:
+                    socket_conn.settimeout(None)
+                except Exception:
+                    pass
                 break
             except Exception:
                 time.sleep(0.2)
