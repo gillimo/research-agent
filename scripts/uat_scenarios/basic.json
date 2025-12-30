@@ -5,6 +5,7 @@
   "auto_wait": true,
   "use_socket": true,
   "socket_token": "uat-token",
+  "event_log": "logs/uat_events.ndjson",
   "steps": [
     {
       "wait_for_event": "loop_ready",

@@ -683,6 +683,9 @@ P20 ? UAT harness stability
 - [x] UAT11: Always-available event log  
   Add `event_log` to capture socket/stdout events in NDJSON for any run.  
   Acceptance: `event_log` records events outside mailbox mode.
+- [x] UAT12: Default event log in scenarios  
+  Add `event_log` to socket scenarios so runs always emit NDJSON traces.  
+  Acceptance: basic and mailbox scenarios write `logs/uat_events.ndjson`.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
