@@ -17,7 +17,7 @@ Quick start
 - Verify local model: `ollama list` should show `phi3`.
 - Copy `.env.example` to `.env` and set `OPENAI_API_KEY` if you plan to use OpenAI models or features derived from Martin.
 - **For Cloud integration:** Set `RESEARCHER_CLOUD_PROVIDER` (e.g., `openai`), `RESEARCHER_CLOUD_MODEL` (e.g., `gpt-4o`), and `RESEARCHER_CLOUD_API_KEY` (or reuse `OPENAI_API_KEY`) in your `.env` for cloud hops.
-- **Local-only mode:** Set `local_only: true` in `config/local.yaml` (or `RESEARCHER_LOCAL_ONLY=1`) to disable all cloud calls.
+- **Local-only mode (default):** `local_only: true` in `config/local.yaml` (or `RESEARCHER_LOCAL_ONLY=1`) blocks all cloud calls. Set `local_only: false` to enable cloud.
 - **Auto source discovery:** `auto_update.sources_on_gap: true` triggers Librarian source suggestions on low-confidence queries.
 - Cloud logs are written to `logs/cloud/cloud.ndjson` when cloud calls run.
 - **Researcher CLI usage:**
@@ -27,6 +27,7 @@ Quick start
   - `python -m researcher ingest data/sample/readme.txt [--json]`: Ingest documents into the local RAG.
   - `python -m researcher ingest data/sample/readme.txt --simple-index`: Ingest with SimpleIndex only.
   - `python -m researcher ingest data/sample --ext txt,md`: Ingest directories/globs with extension filtering.
+  - Chat auto-ingest: mention a valid file path (or a Desktop filename) and Martin ingests it before answering.
   - `echo "query" | python -m researcher ask --stdin [-k 5] [--use-llm] [--cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3] [--json]`: Ask the local index, with options for local LLM generation and cloud integration.
   - `echo "query" | python -m researcher ask --stdin --simple-index`: Ask with SimpleIndex only.
   - `python -m researcher plan --stdin [--run]`: Extract command plans and optionally run them.

@@ -7,8 +7,11 @@ Prereqs
 - Python 3.11+ recommended for the CLI/service (will add requirements once code lands).
 - Secrets/config: copy `.env.example` to `.env` and set `OPENAI_API_KEY` (required for Martin artifact/cloud), `MARTIN_MODEL_MAIN`, `MARTIN_MODEL_MINI` as needed.
 - Optional: Hugging Face token only if you switch to gated embedding models; default embedding is public (`all-MiniLM-L6-v2`).
-- Local-only mode: set `local_only: true` in `config/local.yaml` or `RESEARCHER_LOCAL_ONLY=1` to block all cloud calls.
+- Local-only mode (default): `local_only: true` in `config/local.yaml` or `RESEARCHER_LOCAL_ONLY=1` blocks all cloud calls. Set `local_only: false` to enable cloud.
 - Auto source discovery: set `auto_update.sources_on_gap: true` to request Librarian source suggestions on low-confidence queries.
+- IPC auth (recommended): set `LIBRARIAN_IPC_TOKEN` in the environment for both Martin and the Librarian to require authenticated TCP messages.
+- IPC allowlist (optional): set `LIBRARIAN_IPC_ALLOWLIST=127.0.0.1,::1` to limit IPC clients by host/IP.
+- IPC limits (optional): set `LIBRARIAN_IPC_MAX_BYTES` and `LIBRARIAN_IPC_CHUNK_BYTES` to cap message size and chunk large ingest payloads.
 
 Environment layout
 - Clone/open `C:\Users\gilli\OneDrive\Desktop\research_agent`.
@@ -34,14 +37,17 @@ Commands (current)
 - Rich TUI: `python -m researcher tui`.
 - Bridge (optional cloud hop): `$env:CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"' ; echo "question" | python scripts/researcher_bridge.py --stdin --cloud-mode always`
 - Inline cloud hop: `echo "prompt" | python -m researcher ask --stdin --cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3` (sanitized, logs to `logs/cloud/`; `--cloud-mode always` to force).
+- `CLOUD_CMD` must be a single command without pipes or redirection; it runs without a shell.
 - SimpleIndex only: add `--simple-index` to `status`, `ingest`, or `ask` to skip FAISS and embeddings.
-- Ingest filtering: `python -m researcher ingest data/sample --ext txt,md --max-files 100` (dirs/globs supported).
+- Ingest filtering: `python -m researcher ingest data/sample --ext txt,md --max-files 100` (dirs/globs supported). Ingest is local; a redacted note is sent to the Librarian.
+- Auto-ingest: if you mention a valid file path (or a Desktop filename) in chat, Martin ingests it automatically before answering.
 - Default vector store uses FAISS; if HF model download fails or format mismatches, CLI falls back to SimpleIndex (`mock_index_path`). To avoid 401s, keep default embedding or provide HF auth for private models.
+- Optional: set `RESEARCHER_FORCE_SIMPLE_INDEX=1` to force SimpleIndex and avoid embedding downloads.
 - Logs: `logs/local.log` (rotating) captures ask/ingest/plan/nudge activity.
  - Cloud logs: `logs/cloud/cloud.ndjson` captures cloud call events (hashes/redaction flags).
  - Supervisor loop: `python -m researcher supervise --idle-seconds 300 --sleep-seconds 30` to emit idle prompts.
 - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/files [query|pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/privacy on|off|status`, `/keys`, `/retry`, `/onboarding`, `/context [refresh]`, `/plan`, `/outputs [ledger|export|search]`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/rerun [command|test]`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
-- Privacy: `/privacy on|off|status` disables transcript/log persistence for the current session.
+- Privacy: `/privacy on|off|status` disables transcript, ledger, and `martin.log` persistence for the current session.
 - Test runs: use `/tests run <n>` from the suggested list to execute and record status.
 - Launcher install (Windows): `powershell -ExecutionPolicy Bypass -File scripts\\install_martin.ps1`  
   Uninstall: `powershell -ExecutionPolicy Bypass -File scripts\\uninstall_martin.ps1`.

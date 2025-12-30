@@ -38,7 +38,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "give me a better answer", "not good enough",
         ],
     },
-    "local_only": False,
+    "local_only": True,
     "auto_update": {
         "ingest_threshold": 0.1,
         "ingest_cloud_answers": False,

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 from typing import Dict, Any
 
@@ -15,6 +16,8 @@ def load_index_from_config(cfg: Dict[str, Any]):
     index_path = Path(vs.get("index_path", "data/index/mock_index.pkl"))
     mock_path = Path(vs.get("mock_index_path", "data/index/mock_index.pkl"))
     idx_type = vs.get("type", "simple")
+    if os.environ.get("RESEARCHER_FORCE_SIMPLE_INDEX", "").strip().lower() in {"1", "true", "yes"}:
+        return SimpleIndex.load(mock_path)
     if idx_type == "faiss":
         model = cfg.get("embedding_model", "all-MiniLM-L6-v2")
         try:

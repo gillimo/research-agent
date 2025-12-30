@@ -4,11 +4,11 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CL2: Request/response correlation IDs
-2) CL3: Message size limits + chunking
-3) CL4: Local auth/allowlist for IPC
-4) CL5: Heartbeat + health metrics
-5) G10: Remote pairing + device registry
+1) G2: Cloud prompt preview + approve
+2) CL7: IPC timeout/cancel support
+3) CL8: IPC error taxonomy
+4) CL9: Sanitization assertions at boundaries
+5) CL11: Structured IPC logging
 
 
 P0 – Safety/Secrets
@@ -18,6 +18,14 @@ P0 – Safety/Secrets
 - [x] S2: Git ignores for secrets/state  
   `.env`, `.martin_state.json`, logs/data caches ignored; `.env.example` added.  
   Deps: none.
+- [x] S3: Harden cloud cmd_template execution  
+  Avoid `shell=True`, escape prompts, and prevent logging raw templates or secrets.  
+  Acceptance: cmd_template uses safe argv; sanitized prompts only; template not logged verbatim.  
+  Deps: L1.
+- [x] S4: Expand redaction patterns + pre-log scrubbing  
+  Add coverage for common tokens (JWT, bearer), Linux paths, URLs, env var patterns; scrub log_event payloads.  
+  Acceptance: sanitizer covers common secret classes; logs/ledger show redacted values; tests added.  
+  Deps: F2.
 
 P1 – Foundations (models, schemas, tests)
 - [x] F1: Embedding/vector choice + config  
@@ -241,6 +249,10 @@ P12 ? Trust process audit follow-ups
   Clarify `/agent on` auto-approves commands and how it interacts with approval policy.  
   Acceptance: AGENTS and architecture docs state the behavior explicitly.  
   Deps: CX1.
+- [x] B1: Privacy no-log actually disables ledger/log sinks  
+  Ensure session privacy mode suppresses `state_manager` ledger writes and `martin.log` writes.  
+  Acceptance: no-log prevents ledger/log writes; tests cover; docs updated.  
+  Deps: CX54.
 
 P13 ? Codex UX parity (additional)
 - [x] CX34: Full TUI shell  
@@ -383,23 +395,23 @@ P14 ? Martin-Librarian communication gaps
   Acceptance: invalid or unknown versions are rejected with clear errors.  
 Notes: protocol_version enforced on Librarian IPC requests/responses.  
   Deps: L1.
-- [ ] CL2: Request/response correlation IDs  
+- [x] CL2: Request/response correlation IDs  
   Ensure every IPC request includes a stable `request_id` and responses echo it.  
   Acceptance: logs and ledger entries show request_id end-to-end.  
   Deps: CL1.
-- [ ] CL3: Message size limits + chunking  
+- [x] CL3: Message size limits + chunking  
   Enforce max payload sizes and chunk large requests (e.g., ingest text).  
   Acceptance: oversized payloads fail gracefully; chunking reassembles.  
   Deps: CL1.
-- [ ] CL4: Local auth/allowlist for IPC  
+- [x] CL4: Local auth/allowlist for IPC  
   Restrict IPC to local user context (token or filesystem-based secret).  
   Acceptance: unauthorized clients are rejected; tests cover denial.  
   Deps: CL1.
-- [ ] CL5: Heartbeat + health metrics  
+- [x] CL5: Heartbeat + health metrics  
   Add heartbeat messages and expose last-seen timestamps.  
   Acceptance: `/librarian status --verbose` shows last heartbeat age.  
   Deps: CX19.
-- [ ] CL6: Retry/backoff + circuit breaker  
+- [x] CL6: Retry/backoff + circuit breaker  
   Standardize retry policy with circuit breaker on repeated failures.  
   Acceptance: backoff logged; breaker prevents spam.  
   Deps: L1.
@@ -440,10 +452,22 @@ Notes: protocol_version enforced on Librarian IPC requests/responses.
   Standard templates for librarian prompts with blocklists per domain.  
   Acceptance: librarian requests use templates and enforce blocklists.  
   Deps: CX33.
+- [x] CL16: Passive upkeep cursor/index (gap events)  
+  Avoid scanning the ledger file on every heartbeat; track last cursor or maintain a compact gap index.  
+  Acceptance: upkeep reads incremental gap events with stable performance on large ledgers.  
+  Deps: CL11.
+- [ ] CL17: Passive gap note dedupe + rate limits  
+  Deduplicate similar gap prompts and cap suggestions per topic per time window.  
+  Acceptance: repeated gaps do not spam inbox; logs show dedupe decisions.  
+  Deps: CL16, CL12.
+- [ ] CL18: Adaptive heartbeat payload  
+  Emit heartbeat only on changes or include concise health metrics (last request, queue length, last error).  
+  Acceptance: heartbeat is less noisy and includes health summary fields.  
+  Deps: CL5.
 
 
 P15 ? Project goal completion (local control + proprietary safety)
-- [ ] G1: Local-only default posture  
+- [x] G1: Local-only default posture  
   Default to local-only unless explicitly enabled by the user.  
   Acceptance: config defaults to local-only; clear warning when enabling cloud.  
   Deps: CX18.
@@ -512,3 +536,17 @@ P16 ? Operator guidance
   Provide a single authoritative Markdown guide for Martin's operating rules and workflows.  
   Acceptance: `docs/martin_operator_guide.md` covers workflow, safety, cloud rules, and logging.  
   Deps: AGENTS.md.
+
+P17 ? File governance parity
+- [ ] FG1: Workspace write hard-block option  
+  Add a policy toggle to refuse all writes outside repo root even with approval.  
+  Acceptance: when enabled, out-of-repo writes are blocked with a clear error and log entry.  
+  Deps: CX57.
+- [ ] FG2: External editor provenance hook  
+  Capture pre/post hash for edited files when external editor flow is used.  
+  Acceptance: ledger records file path + hash delta for editor-applied changes.  
+  Deps: CX12.
+- [ ] FG3: Centralized file-write policy gate for IPC ingest  
+  Enforce a single write policy for Librarian ingest paths and any IPC-triggered writes.  
+  Acceptance: ingest rejected if path violates policy; logged with request_id.  
+  Deps: CL2, CL10.

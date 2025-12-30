@@ -1,19 +1,38 @@
+import os
 import socket
 import threading
 import json
 from typing import Dict, Any, Callable, Optional
 
 PROTOCOL_VERSION = "1"
+AUTH_TOKEN_ENV = "LIBRARIAN_IPC_TOKEN"
+ALLOWLIST_ENV = "LIBRARIAN_IPC_ALLOWLIST"
+MAX_MSG_BYTES = int(os.getenv("LIBRARIAN_IPC_MAX_BYTES", 1024 * 1024))
+
+
+def _parse_allowlist(raw: str) -> list[str]:
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 class SocketServer:
     """
     A simple socket server to listen for messages from the Librarian,
     enabling bi-directional communication.
     """
-    def __init__(self, host: str, port: int, handler: Optional[Callable[[Dict[str, Any]], None]] = None):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        handler: Optional[Callable[[Dict[str, Any]], None]] = None,
+        auth_token: Optional[str] = None,
+        allowlist: Optional[list[str]] = None,
+    ):
         self.host = host
         self.port = port
         self.handler = handler
+        self.auth_token = auth_token if auth_token is not None else os.getenv(AUTH_TOKEN_ENV, "")
+        self.allowlist = allowlist if allowlist is not None else _parse_allowlist(os.getenv(ALLOWLIST_ENV, ""))
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_thread = None
@@ -28,6 +47,18 @@ class SocketServer:
                 if not len_bytes:
                     break
                 msg_len = int.from_bytes(len_bytes, byteorder="big")
+                if msg_len > MAX_MSG_BYTES:
+                    remaining = msg_len
+                    while remaining > 0:
+                        chunk = conn.recv(min(4096, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                    response = {"status": "error", "message": "payload too large", "protocol_version": PROTOCOL_VERSION}
+                    resp_json = json.dumps(response).encode("utf-8")
+                    resp_len = len(resp_json).to_bytes(4, byteorder="big")
+                    conn.sendall(resp_len + resp_json)
+                    continue
                 msg_bytes = b""
                 while len(msg_bytes) < msg_len:
                     chunk = conn.recv(msg_len - len(msg_bytes))
@@ -38,8 +69,20 @@ class SocketServer:
                 try:
                     message: Dict[str, Any] = json.loads(msg_bytes.decode("utf-8"))
                     print(f"[SocketServer] Received message: {message}")
+                    if self.allowlist and addr[0] not in self.allowlist:
+                        response = {"status": "error", "message": "Unauthorized host", "protocol_version": PROTOCOL_VERSION, "request_id": message.get("request_id")}
+                        resp_json = json.dumps(response).encode("utf-8")
+                        resp_len = len(resp_json).to_bytes(4, byteorder="big")
+                        conn.sendall(resp_len + resp_json)
+                        continue
+                    if self.auth_token and message.get("auth_token") != self.auth_token:
+                        response = {"status": "error", "message": "Unauthorized", "protocol_version": PROTOCOL_VERSION, "request_id": message.get("request_id")}
+                        resp_json = json.dumps(response).encode("utf-8")
+                        resp_len = len(resp_json).to_bytes(4, byteorder="big")
+                        conn.sendall(resp_len + resp_json)
+                        continue
                     if message.get("protocol_version") not in (None, PROTOCOL_VERSION):
-                        response = {"status": "error", "message": "Protocol version mismatch", "protocol_version": PROTOCOL_VERSION}
+                        response = {"status": "error", "message": "Protocol version mismatch", "protocol_version": PROTOCOL_VERSION, "request_id": message.get("request_id")}
                         resp_json = json.dumps(response).encode("utf-8")
                         resp_len = len(resp_json).to_bytes(4, byteorder="big")
                         conn.sendall(resp_len + resp_json)

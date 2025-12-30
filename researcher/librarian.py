@@ -17,6 +17,21 @@ from researcher.index_utils import load_index_from_config
 
 LIBRARIAN_HEARTBEAT_INTERVAL_S = int(os.environ.get("LIBRARIAN_HEARTBEAT_INTERVAL_S", 10))
 PROTOCOL_VERSION = "1"
+AUTH_TOKEN_ENV = "LIBRARIAN_IPC_TOKEN"
+ALLOWLIST_ENV = "LIBRARIAN_IPC_ALLOWLIST"
+MAX_MSG_BYTES = int(os.environ.get("LIBRARIAN_IPC_MAX_BYTES", 1024 * 1024))
+CHUNK_TTL_S = int(os.environ.get("LIBRARIAN_IPC_CHUNK_TTL_S", 300))
+MAX_CHUNKS = int(os.environ.get("LIBRARIAN_IPC_MAX_CHUNKS", 200))
+BACKOFF_BASE_S = float(os.environ.get("LIBRARIAN_BACKOFF_BASE_S", 2))
+BACKOFF_MAX_S = float(os.environ.get("LIBRARIAN_BACKOFF_MAX_S", 60))
+BREAKER_THRESHOLD = int(os.environ.get("LIBRARIAN_BREAKER_THRESHOLD", 3))
+BREAKER_COOLDOWN_S = int(os.environ.get("LIBRARIAN_BREAKER_COOLDOWN_S", 300))
+
+
+def _parse_allowlist(raw: str) -> List[str]:
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _note_id(text: str) -> str:
@@ -41,9 +56,43 @@ def _parse_sources(text: str) -> List[str]:
     return lines[:10]
 
 
-def _read_recent_gap_events(last_ts: str, limit: int = 200) -> List[Dict[str, Any]]:
+def _read_recent_gap_events(last_ts: str, limit: int = 200, cursor_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     if not LEDGER_FILE.exists():
         return []
+    if cursor_path:
+        try:
+            cursor_path.parent.mkdir(parents=True, exist_ok=True)
+            cursor = {}
+            if cursor_path.exists():
+                cursor = json.loads(cursor_path.read_text(encoding="utf-8") or "{}")
+            offset = int(cursor.get("offset", 0))
+            size = LEDGER_FILE.stat().st_size
+            if offset >= size:
+                cursor_path.write_text(json.dumps({"offset": size, "last_ts": cursor.get("last_ts", "")}), encoding="utf-8")
+                return []
+            with LEDGER_FILE.open("r", encoding="utf-8") as f:
+                f.seek(offset)
+                lines = f.read().splitlines()
+                new_offset = f.tell()
+            events: List[Dict[str, Any]] = []
+            last_seen = cursor.get("last_ts", "")
+            for line in lines:
+                try:
+                    row = json.loads(line)
+                    entry = row.get("entry", {})
+                    if entry.get("event") != "rag_gap":
+                        continue
+                    ts = entry.get("ts", "")
+                    if last_seen and ts <= last_seen:
+                        continue
+                    events.append(entry)
+                except Exception:
+                    continue
+            new_last_ts = events[-1].get("ts", last_seen) if events else last_seen
+            cursor_path.write_text(json.dumps({"offset": new_offset, "last_ts": new_last_ts}), encoding="utf-8")
+            return events[-limit:]
+        except Exception:
+            return []
     try:
         lines = LEDGER_FILE.read_text(encoding="utf-8").splitlines()
     except Exception:
@@ -63,6 +112,10 @@ def _read_recent_gap_events(last_ts: str, limit: int = 200) -> List[Dict[str, An
             continue
     return events
 
+
+def _now_ts() -> float:
+    return time.time()
+
 class Librarian:
     """
     The background Librarian process. Manages cloud interactions, RAG upkeep,
@@ -77,7 +130,15 @@ class Librarian:
         self.debug_mode = debug_mode
         self.running = True
         self.last_upkeep_time = time.time()
+        self.last_heartbeat_ts = _now_ts()
+        self.last_request_ts = None
         self.state = load_state()
+        self.allowlist = _parse_allowlist(os.environ.get(ALLOWLIST_ENV, ""))
+        self._chunk_buffers: Dict[str, Dict[str, Any]] = {}
+        self.cloud_failures = 0
+        self.cloud_backoff_until = 0.0
+        self.cloud_breaker_until = 0.0
+        self.gap_cursor_path = ROOT_DIR / "logs" / "librarian_gap_cursor.json"
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
@@ -87,6 +148,100 @@ class Librarian:
         if self.debug_mode:
             print(f"[Librarian {level.upper()}] {message} {json.dumps(data) if data else ''}")
 
+    def _call_cloud_with_policy(self, prompt: str, cmd_template: Optional[str]) -> CloudCallResult:
+        now = _now_ts()
+        if self.cloud_breaker_until and now < self.cloud_breaker_until:
+            return CloudCallResult(False, "", "circuit breaker open", 1, "[blocked]", True, hashlib.sha256(b"breaker").hexdigest())
+        if self.cloud_backoff_until and now < self.cloud_backoff_until:
+            return CloudCallResult(False, "", "backoff active", 1, "[blocked]", True, hashlib.sha256(b"backoff").hexdigest())
+
+        result = call_cloud(prompt=prompt, cmd_template=cmd_template)
+        if result.ok:
+            self.cloud_failures = 0
+            self.cloud_backoff_until = 0.0
+            return result
+
+        self.cloud_failures += 1
+        backoff = min(BACKOFF_BASE_S * (2 ** max(0, self.cloud_failures - 1)), BACKOFF_MAX_S)
+        self.cloud_backoff_until = now + backoff
+        self._log("Cloud backoff engaged", level="warn", failures=self.cloud_failures, backoff_s=backoff)
+        if self.cloud_failures >= BREAKER_THRESHOLD:
+            self.cloud_breaker_until = now + BREAKER_COOLDOWN_S
+            self._log("Circuit breaker opened", level="warn", cooldown_s=BREAKER_COOLDOWN_S)
+        return result
+
+    def _handle_ingest_text(self, text: str, topic: str, source: str) -> Dict[str, Any]:
+        if not text:
+            return {"status": "error", "message": "Missing text for ingest_text"}
+        notes_dir = (ROOT_DIR / "data" / "processed" / "librarian_notes")
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+        safe_topic = "".join(ch for ch in topic if ch.isalnum() or ch in ("-", "_")).strip() or "note"
+        path = notes_dir / f"{ts}_{safe_topic}.txt"
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        header = [
+            f"# source: {source}",
+            f"# topic: {topic}",
+            f"# hash: {content_hash}",
+            f"# ts: {ts}",
+            "",
+        ]
+        path.write_text("\n".join(header) + text + "\n", encoding="utf-8")
+        idx = load_index_from_config(self.cfg)
+        ingest_result = ingest_files(idx, [path])
+        if hasattr(idx, "save"):
+            idx.save()
+        log_event(self.state, "librarian_ingest_text", topic=topic, source=source, hash=content_hash, path=str(path))
+        self._send_notification_to_researcher({
+            "type": "notification",
+            "event": "ingestion_complete",
+            "details": {"source": source, "path": str(path), "hash": content_hash, "result": ingest_result},
+        })
+        return {"status": "success", "result": ingest_result}
+
+    def _handle_ingest_chunk(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        request_id = message.get("request_id") or ""
+        chunk = message.get("chunk", "")
+        total_chunks = int(message.get("total_chunks") or 0)
+        chunk_index = int(message.get("chunk_index") or 0)
+        topic = message.get("topic", "").strip() or "librarian_note"
+        source = message.get("source", "librarian_note")
+        if not request_id or not chunk:
+            return {"status": "error", "message": "Missing chunk payload"}
+        if total_chunks <= 0 or total_chunks > MAX_CHUNKS:
+            return {"status": "error", "message": "Invalid total_chunks"}
+        if chunk_index < 0 or chunk_index >= total_chunks:
+            return {"status": "error", "message": "Invalid chunk_index"}
+
+        buf = self._chunk_buffers.get(request_id)
+        if not buf:
+            buf = {
+                "chunks": [None] * total_chunks,
+                "topic": topic,
+                "source": source,
+                "created": _now_ts(),
+            }
+            self._chunk_buffers[request_id] = buf
+        if total_chunks != len(buf["chunks"]):
+            return {"status": "error", "message": "Chunk count mismatch"}
+
+        buf["chunks"][chunk_index] = chunk
+        if all(part is not None for part in buf["chunks"]):
+            text = "".join(part for part in buf["chunks"] if part)
+            self._chunk_buffers.pop(request_id, None)
+            return self._handle_ingest_text(text, buf["topic"], buf["source"])
+        return {"status": "success", "message": "chunk_received"}
+
+    def _cleanup_chunk_buffers(self) -> None:
+        if not self._chunk_buffers:
+            return
+        now = _now_ts()
+        expired = [k for k, v in self._chunk_buffers.items() if now - v.get("created", now) > CHUNK_TTL_S]
+        for key in expired:
+            self._chunk_buffers.pop(key, None)
+        if expired:
+            self._log("Expired chunk buffers", level="warn", count=len(expired))
+
     def _send_notification_to_researcher(self, notification: Dict[str, Any]):
         """Sends a notification to the researcher's socket server."""
         if not self.researcher_addr[0] or not self.researcher_addr[1]:
@@ -95,6 +250,9 @@ class Librarian:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 notification.setdefault("protocol_version", PROTOCOL_VERSION)
+                auth_token = os.environ.get(AUTH_TOKEN_ENV, "")
+                if auth_token:
+                    notification.setdefault("auth_token", auth_token)
                 sock.connect(self.researcher_addr)
                 msg_json = json.dumps(notification).encode('utf-8')
                 msg_len = struct.pack('!I', len(msg_json))
@@ -113,21 +271,32 @@ class Librarian:
 
     def _handle_ipc_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handles incoming IPC messages from the Researcher."""
-        self._log("Received IPC message", message_type=message.get("type"))
+        request_id = message.get("request_id")
+        self._log("Received IPC message", message_type=message.get("type"), request_id=request_id)
         if message.get("protocol_version") != PROTOCOL_VERSION:
-            return {"status": "error", "message": "Protocol version mismatch.", "protocol_version": PROTOCOL_VERSION}
+            return {"status": "error", "message": "Protocol version mismatch.", "protocol_version": PROTOCOL_VERSION, "request_id": request_id}
         response: Dict[str, Any] = {"status": "error", "message": "Unknown message type"}
         msg_type = message.get("type")
+        self.last_request_ts = _now_ts()
 
         if msg_type == "shutdown":
             self.running = False
             response = {"status": "success", "message": "Librarian shutting down"}
         elif msg_type == "status_request":
-            response = {"status": "success", "message": "Librarian is running"}
+            now = _now_ts()
+            response = {
+                "status": "success",
+                "message": "Librarian is running",
+                "heartbeat_ts": self.last_heartbeat_ts,
+                "heartbeat_age_s": round(max(0.0, now - self.last_heartbeat_ts), 2),
+                "last_request_ts": self.last_request_ts,
+                "cloud_backoff_until": self.cloud_backoff_until,
+                "cloud_breaker_until": self.cloud_breaker_until,
+            }
         elif msg_type == "cloud_query":
             prompt = message.get("prompt", "")
             cmd_template = message.get("cloud_cmd")
-            result: CloudCallResult = call_cloud(prompt=prompt, cmd_template=cmd_template)
+            result: CloudCallResult = self._call_cloud_with_policy(prompt=prompt, cmd_template=cmd_template)
             response = {"status": "success" if result.ok else "error", "result": result.__dict__}
         elif msg_type == "research_request":
             topic = message.get("topic", "").strip()
@@ -141,7 +310,7 @@ class Librarian:
                     "Include 3-5 bullet takeaways and suggested keywords for local RAG ingest. "
                     f"Topic: {topic}"
                 )
-                result = call_cloud(prompt=prompt, cmd_template=message.get("cloud_cmd"))
+                result = self._call_cloud_with_policy(prompt=prompt, cmd_template=message.get("cloud_cmd"))
                 output_hash = hashlib.sha256((result.output or "").encode("utf-8")).hexdigest() if result.output else ""
                 response = {"status": "success" if result.ok else "error", "result": result.__dict__}
                 note = {
@@ -170,7 +339,7 @@ class Librarian:
                     "Keep each source on its own line with a short description. "
                     f"Topic: {topic}"
                 )
-                result = call_cloud(prompt=prompt, cmd_template=message.get("cloud_cmd"))
+                result = self._call_cloud_with_policy(prompt=prompt, cmd_template=message.get("cloud_cmd"))
                 response = {"status": "success" if result.ok else "error", "result": result.__dict__}
                 sources = _parse_sources(result.output or "")
                 note = {
@@ -191,34 +360,9 @@ class Librarian:
             text = message.get("text", "").strip()
             topic = message.get("topic", "").strip() or "librarian_note"
             source = message.get("source", "librarian_note")
-            if not text:
-                response = {"status": "error", "message": "Missing text for ingest_text"}
-            else:
-                notes_dir = (ROOT_DIR / "data" / "processed" / "librarian_notes")
-                notes_dir.mkdir(parents=True, exist_ok=True)
-                ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
-                safe_topic = "".join(ch for ch in topic if ch.isalnum() or ch in ("-", "_")).strip() or "note"
-                path = notes_dir / f"{ts}_{safe_topic}.txt"
-                content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-                header = [
-                    f"# source: {source}",
-                    f"# topic: {topic}",
-                    f"# hash: {content_hash}",
-                    f"# ts: {ts}",
-                    "",
-                ]
-                path.write_text("\n".join(header) + text + "\n", encoding="utf-8")
-                idx = load_index_from_config(self.cfg)
-                ingest_result = ingest_files(idx, [path])
-                if hasattr(idx, "save"):
-                    idx.save()
-                response = {"status": "success", "result": ingest_result}
-                log_event(self.state, "librarian_ingest_text", topic=topic, source=source, hash=content_hash, path=str(path))
-                self._send_notification_to_researcher({
-                    "type": "notification",
-                    "event": "ingestion_complete",
-                    "details": {"source": source, "path": str(path), "hash": content_hash, "result": ingest_result},
-                })
+            response = self._handle_ingest_text(text, topic, source)
+        elif msg_type == "ingest_text_chunk":
+            response = self._handle_ingest_chunk(message)
         elif msg_type == "ingest_request":
             paths_str: List[str] = message.get("paths", [])
             idx = load_index_from_config(self.cfg)
@@ -230,7 +374,9 @@ class Librarian:
             self._send_notification_to_researcher({"type": "notification", "event": "ingestion_complete", "details": ingest_result})
 
         response["protocol_version"] = PROTOCOL_VERSION
-        self._log("Responding to IPC message", message_type=msg_type, response_status=response.get("status"))
+        if request_id:
+            response["request_id"] = request_id
+        self._log("Responding to IPC message", message_type=msg_type, response_status=response.get("status"), request_id=request_id)
         return response
         
     def _handle_client(self, conn, addr):
@@ -243,6 +389,23 @@ class Librarian:
                 if not len_bytes:
                     break
                 msg_len = struct.unpack('!I', len_bytes)[0]
+                if msg_len > MAX_MSG_BYTES:
+                    # Drain oversized payload
+                    remaining = msg_len
+                    while remaining > 0:
+                        chunk = conn.recv(min(4096, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                    response_data = {
+                        "status": "error",
+                        "message": "payload too large",
+                        "protocol_version": PROTOCOL_VERSION,
+                    }
+                    resp_json = json.dumps(response_data).encode('utf-8')
+                    resp_len = struct.pack('!I', len(resp_json))
+                    conn.sendall(resp_len + resp_json)
+                    continue
 
                 # Read message
                 msg_bytes = b''
@@ -253,10 +416,27 @@ class Librarian:
                     msg_bytes += chunk
                 
                 message = json.loads(msg_bytes.decode('utf-8'))
+                if self.allowlist and addr[0] not in self.allowlist:
+                    self._log("Rejected IPC client (allowlist)", level="warn", client=addr[0])
+                    response_data = {
+                        "status": "error",
+                        "message": "Unauthorized host",
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": message.get("request_id"),
+                    }
+                else:
+                    auth_token = os.environ.get(AUTH_TOKEN_ENV, "")
+                    if auth_token and message.get("auth_token") != auth_token:
+                        response_data = {
+                            "status": "error",
+                            "message": "Unauthorized",
+                            "protocol_version": PROTOCOL_VERSION,
+                            "request_id": message.get("request_id"),
+                        }
+                    else:
+                        # Process message and get response
+                        response_data = self._handle_ipc_message(message)
                 
-                # Process message and get response
-                response_data = self._handle_ipc_message(message)
-
                 # Send response
                 resp_json = json.dumps(response_data).encode('utf-8')
                 resp_len = struct.pack('!I', len(resp_json))
@@ -275,8 +455,9 @@ class Librarian:
     def _perform_upkeep(self) -> None:
         """Periodically sends a proactive message to the researcher."""
         self._log("Performing upkeep and sending proactive message.")
+        self._cleanup_chunk_buffers()
         last_ts = self.state.get("librarian_last_gap_ts", "")
-        gap_events = _read_recent_gap_events(last_ts)
+        gap_events = _read_recent_gap_events(last_ts, cursor_path=self.gap_cursor_path)
         for entry in gap_events:
             data = entry.get("data", {})
             topic = data.get("prompt", "")
@@ -298,7 +479,7 @@ class Librarian:
                     "Keep each source on its own line with a short description. "
                     f"Topic: {topic}"
                 )
-                result = call_cloud(prompt=prompt, cmd_template=None)
+                result = self._call_cloud_with_policy(prompt=prompt, cmd_template=None)
                 sources = _parse_sources(result.output or "")
                 src_note = {
                     "type": "notification",
@@ -326,6 +507,7 @@ class Librarian:
             "event": "heartbeat",
             "details": {"timestamp": time.time()}
         })
+        self.last_heartbeat_ts = _now_ts()
         self.last_upkeep_time = time.time()
 
     def run(self) -> None:

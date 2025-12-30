@@ -15,6 +15,11 @@ def _find_free_port():
 def _run_librarian(port: int):
     os.environ["LIBRARIAN_HOST"] = "127.0.0.1"
     os.environ["LIBRARIAN_PORT"] = str(port)
+    os.environ["LIBRARIAN_IPC_TOKEN"] = "test-token"
+    os.environ["LIBRARIAN_IPC_MAX_BYTES"] = "512"
+    os.environ["LIBRARIAN_IPC_CHUNK_BYTES"] = "200"
+    os.environ["LIBRARIAN_TIMEOUT_S"] = "60"
+    os.environ["RESEARCHER_FORCE_SIMPLE_INDEX"] = "1"
     os.environ["RESEARCHER_CLOUD_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
     from researcher.librarian import Librarian
@@ -25,6 +30,11 @@ def _run_librarian(port: int):
 @pytest.fixture(scope="module")
 def librarian_process():
     port = _find_free_port()
+    os.environ["LIBRARIAN_IPC_TOKEN"] = "test-token"
+    os.environ["LIBRARIAN_IPC_MAX_BYTES"] = "512"
+    os.environ["LIBRARIAN_IPC_CHUNK_BYTES"] = "200"
+    os.environ["LIBRARIAN_TIMEOUT_S"] = "60"
+    os.environ["RESEARCHER_FORCE_SIMPLE_INDEX"] = "1"
     p = Process(target=_run_librarian, args=(port,), daemon=True)
     p.start()
     time.sleep(1)
@@ -45,6 +55,9 @@ def test_librarian_ipc_status(librarian_process):
     client.close()
     assert response is not None
     assert response.get("status") == "success"
+    assert response.get("request_id") == client.last_request_id
+    assert "heartbeat_age_s" in response
+    assert response.get("last_request_ts") is not None
 
 
 def test_librarian_research_request(librarian_process):
@@ -56,3 +69,16 @@ def test_librarian_research_request(librarian_process):
     assert response is not None
     assert "status" in response
     assert "result" in response
+    assert response.get("request_id") == client.last_request_id
+
+
+def test_librarian_ipc_rejects_missing_token(librarian_process, monkeypatch):
+    address = librarian_process
+    monkeypatch.delenv("LIBRARIAN_IPC_TOKEN", raising=False)
+    from researcher.librarian_client import LibrarianClient
+    client = LibrarianClient(address=address)
+    response = client.get_status()
+    client.close()
+    assert response is not None
+    assert response.get("status") == "error"
+    assert response.get("message") == "Unauthorized"

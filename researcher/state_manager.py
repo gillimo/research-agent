@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List
 
 from researcher import __version__
+from researcher import sanitize
 
 # Define common paths for the researcher project
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -107,7 +108,10 @@ def append_ledger(st: Dict[str, Any], entry: Dict[str, Any]) -> None:
 
 def log_event(st: Dict[str, Any], event: str, **data: Any) -> None:
     """Logs a generic event to the ledger."""
-    append_ledger(st, _ledger_entry(event, data))
+    if st.get("session_privacy") == "no-log":
+        return
+    clean_data = sanitize.scrub_data(data)
+    append_ledger(st, _ledger_entry(event, clean_data))
 
 # --- Session context management ---
 class SessionCtx:

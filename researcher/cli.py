@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import sys
 import time
@@ -67,8 +68,27 @@ def _store_long_output(output: str, label: str) -> str:
         return ""
 
 
+def _privacy_enabled_state() -> bool:
+    try:
+        st = load_state()
+        return st.get("session_privacy") == "no-log"
+    except Exception:
+        return False
+
+
+def _null_logger() -> logging.Logger:
+    logger = logging.getLogger("martin.cli.noop")
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
+    logger.propagate = False
+    logger.disabled = True
+    return logger
+
+
 def _get_cli_logger(cfg):
     global _CLI_LOGGER
+    if _privacy_enabled_state():
+        return _null_logger()
     if _CLI_LOGGER:
         return _CLI_LOGGER
     logs_dir = Path(cfg.get("data_paths", {}).get("logs", "logs"))
@@ -208,6 +228,71 @@ def _collect_ingest_files(inputs: List[str], exts: Optional[List[str]] = None, m
     return out
 
 
+def _extract_paths_from_text(text: str) -> List[str]:
+    candidates: List[str] = []
+    try:
+        candidates.extend(shlex.split(text))
+    except Exception:
+        candidates.extend(text.split())
+    candidates.extend(re.findall(r"[A-Za-z]:\\[^\s\"']+|/[^\s\"']+", text))
+    seen = set()
+    out: List[str] = []
+    for raw in candidates:
+        val = raw.strip().strip("\"'")
+        val = val.rstrip(").,;:!?]")
+        if not val or val in seen:
+            continue
+        p = Path(val)
+        if p.exists():
+            seen.add(val)
+            out.append(val)
+    return out
+
+
+def _extract_desktop_targets(text: str) -> List[str]:
+    lowered = text.lower()
+    if "desktop" not in lowered:
+        return []
+    ctx = get_system_context()
+    base = ""
+    if "onedrive" in lowered and ctx.get("paths", {}).get("onedrive_desktop"):
+        base = ctx["paths"]["onedrive_desktop"]
+    elif ctx.get("paths", {}).get("desktop"):
+        base = ctx["paths"]["desktop"]
+    if not base:
+        return []
+    matches = re.findall(r"([A-Za-z0-9_\- .]+\\.[A-Za-z0-9]{1,5})", text)
+    out: List[str] = []
+    for name in matches:
+        candidate = str(Path(base) / name.strip())
+        if Path(candidate).exists():
+            out.append(candidate)
+    return out
+
+
+def _build_librarian_ingest_note(paths: List[str], max_files: int = 5, max_chars: int = 4000) -> str:
+    if not paths:
+        return ""
+    parts = [f"Ingested {len(paths)} files into local RAG. Redacted previews:"]
+    for p in paths[:max_files]:
+        name = Path(p).name
+        try:
+            text = Path(p).read_text(encoding="utf-8", errors="ignore")
+        except Exception as e:
+            parts.append(f"- {name}: [read error: {e}]")
+            continue
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n...[truncated]"
+        sanitized, _ = sanitize.sanitize_prompt(text)
+        preview = " ".join((sanitized or "").split())
+        if len(preview) > 400:
+            preview = preview[:400] + "…"
+        parts.append(f"- {name}: {preview}")
+    if len(paths) > max_files:
+        parts.append(f"... {len(paths) - max_files} more files omitted")
+    return "\n".join(parts)
+
+
 def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional[List[str]] = None, max_files: int = 0, as_json: bool = False, skip_librarian: bool = False) -> int:
     if not paths:
         print("No files provided to ingest.", file=sys.stderr)
@@ -226,55 +311,35 @@ def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional
             print(msg, file=sys.stderr)
         return 1
 
-    if not skip_librarian:
-        # Use LibrarianClient to request ingestion
-        client = LibrarianClient()
-        ingest_resp = client.request_ingestion(existing_paths)
-        client.close()
-
-        if ingest_resp.get("status") == "success":
-            result_data = ingest_resp.get("result", {})
-            ingested_count = result_data.get("ingested", 0)
-            errors = result_data.get("errors", [])
-            
-            log_event(st, "ingest_command", files_count=len(paths), errors_count=len(errors), idx_type="via_librarian")
-            try:
-                st = load_state()
-                st["last_ingest"] = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "count": ingested_count, "mode": "via_librarian"}
-                save_state(st)
-            except Exception:
-                pass
-            for err in errors:
-                print(f"error: {err}", file=sys.stderr)
-            if as_json:
-                print(json.dumps({"ok": True, "mode": "via_librarian", "ingested": ingested_count, "errors": errors}, ensure_ascii=False))
-            else:
-                print(f"Ingested {ingested_count} files (via Librarian)")
-            return 0
-
-        error_msg = ingest_resp.get("message", "Unknown error during ingestion via Librarian.")
-        log_event(st, "ingest_command_failed", files_count=len(paths), error=error_msg)
-        if not as_json:
-            print(f"Warning: Librarian ingest failed ({error_msg}); falling back to local ingest.", file=sys.stderr)
-
     idx = _load_index(cfg, force_simple=force_simple)
     files = [Path(p) for p in existing_paths]
     local_result = ingest_files(idx, files)
     if hasattr(idx, "save"):
         idx.save()
-    log_event(st, "ingest_command_fallback", files_count=len(files), errors_count=len(local_result.get("errors", [])), idx_type="local")
+    log_event(st, "ingest_command", files_count=len(files), errors_count=len(local_result.get("errors", [])), idx_type="local")
     try:
         st = load_state()
         st["last_ingest"] = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "count": local_result.get("ingested", 0), "mode": "local"}
         save_state(st)
     except Exception:
         pass
+    if not skip_librarian:
+        try:
+            st = load_state()
+            if st.get("session_privacy") != "no-log":
+                note = _build_librarian_ingest_note(existing_paths)
+                if note:
+                    client = LibrarianClient()
+                    client.ingest_text(note, topic="local_ingest_notice", source="local_ingest_redacted")
+                    client.close()
+        except Exception:
+            pass
     if as_json:
-        print(json.dumps({"ok": True, "mode": "local_fallback", "ingested": local_result.get("ingested", 0), "errors": local_result.get("errors", [])}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "mode": "local", "ingested": local_result.get("ingested", 0), "errors": local_result.get("errors", [])}, ensure_ascii=False))
     else:
         for err in local_result.get("errors", []):
             print(f"error: {err}", file=sys.stderr)
-        print(f"Ingested {local_result.get('ingested', 0)} files (local fallback)")
+        print(f"Ingested {local_result.get('ingested', 0)} files (local)")
     return 0
 
 
@@ -549,8 +614,15 @@ def cmd_chat(cfg, args) -> int:
             print(f"\033[96mmartin: Context update ({reason})\033[0m")
             chat_ui.print_context_summary(context_cache)
             if delta:
-                print("martin: Context changes:")
-                print(json.dumps(delta, ensure_ascii=False, indent=2))
+                parts = []
+                new_files = delta.get("new_recent_files") or []
+                if new_files:
+                    parts.append(f"new files: {len(new_files)}")
+                git_status = delta.get("git_status")
+                if git_status:
+                    parts.append(f"git: {git_status}")
+                if parts:
+                    print("martin: Context changes - " + " | ".join(parts))
         except Exception:
             pass
     def _run_onboarding() -> None:
@@ -1744,6 +1816,14 @@ def cmd_chat(cfg, args) -> int:
                         break
                     continue
 
+            auto_paths = _extract_paths_from_text(user_input)
+            if not auto_paths:
+                auto_paths = _extract_desktop_targets(user_input)
+            if auto_paths:
+                cmd_ingest(cfg, auto_paths, force_simple=False, as_json=False, skip_librarian=False)
+            elif "desktop" in user_input.lower() and ("read" in user_input.lower() or "ingest" in user_input.lower()):
+                print("martin: I can ingest a file from your Desktop. Please tell me the filename or paste the full path.")
+
             if cloud_enabled and cfg.get("cloud", {}).get("trigger_on_disagreement") and _is_disagreement(user_input) and not cfg.get("local_only"):
                 prompt = (last_user_request or user_input).strip()
                 prompt = f"{prompt}\n\nUser feedback: {user_input}\nPlease answer correctly."
@@ -2093,13 +2173,13 @@ def cmd_chat(cfg, args) -> int:
 
             successes_this_turn = 0
             failures_this_turn = 0
-            bar = tqdm(plan, desc="Executing Command Plan", unit="cmd", leave=False) # Use tqdm
+            bar = tqdm(plan, desc="Executing plan", unit="cmd", leave=False)
             for step in bar:
                 bar.set_postfix({"ok": successes_this_turn, "fail": failures_this_turn}, refresh=True)
                 if step["status"] != "pending":
                     continue
                 step["started_at"] = time.time()
-                print(f"Executing: {step['cmd']}")
+                print(f"martin: Run {step['index']}/{len(plan)}: {step['cmd']}")
                 if step.get("internal_key"):
                     started = time.time()
                     try:
@@ -2423,7 +2503,7 @@ def cmd_chat(cfg, args) -> int:
                         print("\033[92mmartin: Acknowledged - not applying fix.\033[0m")
                 sess.record_cmd(0 if ok else 1) # Record command outcome
             bar.close()
-            print(f"\033[92mmartin: Turn complete - OK: {successes_this_turn}, FAIL: {failures_this_turn}\033[0m")
+            print(f"\033[92mmartin: Done. OK: {successes_this_turn}, FAIL: {failures_this_turn}\033[0m")
             logger.info("chat_turn_complete ok=%d fail=%d", successes_this_turn, failures_this_turn)
             try:
                 st = load_state()
@@ -2853,6 +2933,10 @@ def handle_librarian(cfg, args) -> int:
                 "message": resp.get("message"),
                 "latency_ms": latency_ms,
                 "cloud_configured": bool(os.environ.get("RESEARCHER_CLOUD_API_KEY") or os.environ.get("OPENAI_API_KEY")),
+                "heartbeat_age_s": resp.get("heartbeat_age_s"),
+                "last_request_ts": resp.get("last_request_ts"),
+                "cloud_backoff_until": resp.get("cloud_backoff_until"),
+                "cloud_breaker_until": resp.get("cloud_breaker_until"),
             }
             try:
                 last_error = None

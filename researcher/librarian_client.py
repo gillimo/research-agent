@@ -3,6 +3,7 @@ import time
 import json
 import socket
 import struct
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -18,6 +19,10 @@ LIBRARIAN_TIMEOUT_S = int(os.getenv("LIBRARIAN_TIMEOUT_S", 10))
 LIBRARIAN_RETRIES = int(os.getenv("LIBRARIAN_RETRIES", 3))
 LIBRARIAN_RETRY_DELAY_S = float(os.getenv("LIBRARIAN_RETRY_DELAY_S", 0.5))
 PROTOCOL_VERSION = "1"
+AUTH_TOKEN_ENV = "LIBRARIAN_IPC_TOKEN"
+MAX_MSG_BYTES = int(os.getenv("LIBRARIAN_IPC_MAX_BYTES", 1024 * 1024))
+CHUNK_BYTES = int(os.getenv("LIBRARIAN_IPC_CHUNK_BYTES", 60_000))
+MAX_CHUNKS = int(os.getenv("LIBRARIAN_IPC_MAX_CHUNKS", 200))
 
 class LibrarianClient:
     """
@@ -26,6 +31,7 @@ class LibrarianClient:
     def __init__(self, address: Tuple[str, int] = None) -> None:
         self.address = address or LIBRARIAN_ADDR
         self._conn: Optional[socket.socket] = None
+        self.last_request_id: Optional[str] = None
 
     def _connect(self) -> bool:
         """Establishes a connection to the Librarian with retries."""
@@ -55,8 +61,15 @@ class LibrarianClient:
         
         try:
             message.setdefault("protocol_version", PROTOCOL_VERSION)
+            request_id = message.setdefault("request_id", str(uuid.uuid4()))
+            self.last_request_id = request_id
+            auth_token = os.getenv(AUTH_TOKEN_ENV, "")
+            if auth_token:
+                message.setdefault("auth_token", auth_token)
             # Encode message and prefix with its length (4-byte integer)
             msg_json = json.dumps(message).encode('utf-8')
+            if len(msg_json) > MAX_MSG_BYTES:
+                return {"status": "error", "message": "payload too large", "request_id": request_id}
             msg_len = struct.pack('!I', len(msg_json))
             self._conn.sendall(msg_len + msg_json)
 
@@ -78,6 +91,8 @@ class LibrarianClient:
             response = json.loads(response_bytes.decode('utf-8'))
             if response.get("protocol_version") != PROTOCOL_VERSION:
                 return {"status": "error", "message": "Protocol version mismatch."}
+            if response.get("request_id") != request_id:
+                return {"status": "error", "message": "request_id mismatch", "request_id": response.get("request_id")}
             return response
 
         except (socket.timeout, ConnectionError) as e:
@@ -141,7 +156,36 @@ class LibrarianClient:
             "topic": topic,
             "source": source,
         }
-        return self._send_receive(message)
+        payload = json.dumps(message).encode("utf-8")
+        if len(payload) <= MAX_MSG_BYTES:
+            return self._send_receive(message)
+
+        if not text:
+            return {"status": "error", "message": "empty text"}
+
+        if CHUNK_BYTES <= 0:
+            return {"status": "error", "message": "invalid chunk size"}
+
+        chunks = [text[i:i + CHUNK_BYTES] for i in range(0, len(text), CHUNK_BYTES)]
+        if len(chunks) > MAX_CHUNKS:
+            return {"status": "error", "message": "too many chunks"}
+
+        request_id = str(uuid.uuid4())
+        resp: Dict[str, Any] = {"status": "error", "message": "chunking failed"}
+        for idx, chunk in enumerate(chunks):
+            msg = {
+                "type": "ingest_text_chunk",
+                "chunk_index": idx,
+                "total_chunks": len(chunks),
+                "chunk": chunk,
+                "topic": topic,
+                "source": source,
+                "request_id": request_id,
+            }
+            resp = self._send_receive(msg)
+            if resp.get("status") != "success":
+                return resp
+        return resp
 
     def request_sources(self, topic: str) -> Dict[str, Any]:
         """Ask the Librarian for public source suggestions for a topic."""

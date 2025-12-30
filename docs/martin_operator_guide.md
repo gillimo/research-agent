@@ -37,6 +37,11 @@ Cloud/Librarian rules
 - Do not transmit file paths, secrets, or proprietary text.
 - Prefer local RAG answers first.
 - Log cloud hops with redaction flags and hashes.
+- Set `LIBRARIAN_IPC_TOKEN` before running Martin/Librarian to require authenticated IPC on local TCP sockets.
+- Use `LIBRARIAN_IPC_ALLOWLIST` to restrict IPC clients by host/IP when exposing sockets.
+
+Privacy mode
+- Use `/privacy on` to suppress transcript, ledger, and `martin.log` persistence for the current session.
 
 Context discipline
 - Keep context small; reference files instead of pasting.

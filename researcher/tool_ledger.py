@@ -47,6 +47,8 @@ def append_tool_entry(
     ledger_path: Optional[Path] = None
 ) -> None:
     state = st or load_state()
+    if state.get("session_privacy") == "no-log":
+        return
     path = ledger_path or TOOL_LEDGER_FILE
     _ensure_log_dir(path)
 

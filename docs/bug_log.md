@@ -1,6 +1,9 @@
 Bug Log
 =======
 
+- 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
+- 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
+- 2025-12-29: Windows cmd_template parsing kept quotes in argv, causing FileNotFoundError; stripped wrapped quotes in parser.
 - 2025-12-29: TUI preflight f-string syntax error in `researcher/tui_shell.py` caused pytest collection failure; fixed.
 - 2025-12-19: Agent lacks conversational context retention, gets sidetracked easily, and provides unhelpful responses due to apparent lack of understanding. This is a critical usability issue for the CLI tool.
 - 2025-12-18: Sanitization regexes not redacting email/path; fixed patterns for emails and Windows paths in `researcher/sanitize.py`.

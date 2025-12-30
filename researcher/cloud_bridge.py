@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shlex
 import subprocess
 import json # Added for API calls
 import time
@@ -15,6 +16,32 @@ from researcher.llm_utils import _post_responses, MODEL_MAIN, MODEL_MINI, HEADER
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _template_has_unsafe_chars(template: str) -> bool:
+    lowered = template.lower()
+    if "$(" in lowered or "&&" in lowered or "||" in lowered:
+        return True
+    blocked = ["|", ";", ">", "<", "`", "&"]
+    if os.name == "nt":
+        blocked.append("^")
+    return any(ch in template for ch in blocked)
+
+
+def _split_cmd_template(cmd: str) -> Optional[list[str]]:
+    try:
+        argv = shlex.split(cmd, posix=os.name != "nt")
+        if os.name == "nt":
+            cleaned = []
+            for arg in argv:
+                if len(arg) >= 2 and arg[0] == '"' and arg[-1] == '"':
+                    cleaned.append(arg[1:-1])
+                else:
+                    cleaned.append(arg)
+            argv = cleaned
+        return argv
+    except ValueError:
+        return None
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -130,13 +157,23 @@ def call_cloud(prompt: str, cmd_template: Optional[str] = None, logs_root: Optio
 
     # --- Fallback to CMD Template (if no direct API config or failed) ---
     if cmd_template:
-        log_event(st, "cloud_call_fallback_cmd", hash=hashed_prompt, cmd_template=cmd_template)
-        _append_cloud_log(logs_root, "cloud_call_fallback_cmd", hash=hashed_prompt)
+        template_hash = _hash(cmd_template)
+        log_event(st, "cloud_call_fallback_cmd", hash=hashed_prompt, template_hash=template_hash)
+        _append_cloud_log(logs_root, "cloud_call_fallback_cmd", hash=hashed_prompt, template_hash=template_hash)
+        if _template_has_unsafe_chars(cmd_template):
+            log_event(st, "cloud_call_blocked", reason="cmd_template_unsafe", template_hash=template_hash)
+            _append_cloud_log(logs_root, "cloud_call_blocked", redacted=changed, sanitized=sanitized, reason="cmd_template_unsafe", template_hash=template_hash)
+            return CloudCallResult(False, "", "cmd_template contains unsafe shell characters", 1, sanitized, changed, hashed_prompt)
         cmd = cmd_template.replace("{prompt}", sanitized)
+        argv = _split_cmd_template(cmd)
+        if not argv:
+            log_event(st, "cloud_call_blocked", reason="cmd_template_parse_failed", template_hash=template_hash)
+            _append_cloud_log(logs_root, "cloud_call_blocked", redacted=changed, sanitized=sanitized, reason="cmd_template_parse_failed", template_hash=template_hash)
+            return CloudCallResult(False, "", "cmd_template parse failed", 1, sanitized, changed, hashed_prompt)
         try:
             proc = subprocess.run(
-                cmd,
-                shell=True,
+                argv,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
