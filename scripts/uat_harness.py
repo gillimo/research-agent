@@ -547,6 +547,22 @@ def main() -> int:
         while time.time() < deadline:
             _flush_pending()
             time.sleep(0.1)
+        if pending_inputs:
+            _append_log(
+                event_log,
+                {
+                    "ts": time.time(),
+                    "type": "pending_inputs",
+                    "count": len(pending_inputs),
+                    "pending": [
+                        {
+                            "input_when_text": item.get("input_when_text"),
+                            "input_when_event": item.get("input_when_event"),
+                        }
+                        for item in pending_inputs
+                    ],
+                },
+            )
         _send("quit")
         time.sleep(0.25)
     if not args.keep_open and not mailbox_mode:

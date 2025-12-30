@@ -767,6 +767,9 @@ P20 ? UAT harness stability
 - [x] UAT39: Fallback for non-prompt tokens  
   When prompt texts don’t include a token, count matches in output buffer.  
   Acceptance: conditional inputs for "Done. OK" can trigger in mailbox mode.
+- [x] UAT40: Report pending inputs in mailbox mode  
+  Emit a `pending_inputs` entry in the event log before quitting.  
+  Acceptance: mailbox runs show pending input conditions in `logs/uat_events.ndjson`.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
