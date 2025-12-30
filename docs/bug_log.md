@@ -16,6 +16,7 @@ Bug Log
 - 2025-12-30: Socket reader timed out after connect (1s timeout), dropping output events; set socket to blocking mode after connect.
 - 2025-12-30: Socket UAT loop_ready/prompt waits were too short for slow startups; increased scenario timeouts to 30s.
 - 2025-12-30: Socket UAT input acks were missing because inputs were sent on short-lived connections; switched to sending on the persistent socket connection.
+- 2025-12-30: Socket input wait used a shared threading.Event and occasionally missed `input_used`; switched to event-buffer waits for `input_used`.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

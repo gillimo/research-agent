@@ -366,17 +366,16 @@ def main() -> int:
                 if not found:
                     print("[warn] Prompt not detected before input.", file=sys.stderr)
             _send(text)
-            if use_socket:
-                if not mailbox_mode:
-                    used_timeout = float(step.get("input_timeout", args.timeout))
-                    if used_timeout <= 0:
-                        input_used_event.wait()
-                        input_used_event.clear()
-                    else:
-                        if not input_used_event.wait(timeout=used_timeout):
-                            print("[warn] Input not consumed before timeout.", file=sys.stderr)
-                            break
-                        input_used_event.clear()
+            if use_socket and not mailbox_mode:
+                used_timeout = float(step.get("input_timeout", args.timeout))
+                if used_timeout <= 0:
+                    used_timeout = 3600.0
+                found, event_cursor = _wait_for_event(
+                    event_buffer, ["input_used"], used_timeout, event_cursor, event_lock
+                )
+                if not found:
+                    print("[warn] Input not consumed before timeout.", file=sys.stderr)
+                    break
         if isinstance(wait_for, str):
             if mailbox_mode:
                 continue

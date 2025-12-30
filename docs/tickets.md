@@ -704,6 +704,9 @@ P20 ? UAT harness stability
 - [x] UAT18: Persistent socket input send  
   Send inputs over the persistent socket connection to ensure input_ack/input_used events are observed.  
   Acceptance: socket runs receive input_ack/input_used for each input.
+- [x] UAT19: Input wait uses event buffer  
+  Wait for `input_used` via event-buffer scan instead of threading.Event to avoid missed signals.  
+  Acceptance: socket runs no longer warn about input consumption when events are present.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
