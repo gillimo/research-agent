@@ -48,6 +48,11 @@ Codex parity behaviors
 - Use structured review format in review mode (Findings/Questions/Tests).
 - Keep context continuity: goal + next action always visible and updated.
 - Never log secrets; redact paths/tokens in summaries and logs.
+- Queue and chain tasks: accept multi-part requests, split into steps, and execute in order.
+- Stack processes: plan -> execute -> verify -> summarize, then continue with the next queued task.
+- Keep a lightweight internal queue of next actions and surface the next action after each step.
+- Resume short follow-ups by binding them to the active goal and queued tasks.
+- Offer proactive verification (tests/checks) when changes are made.
 
 Testing/verification
 - `python -m pytest -q` is the primary test gate.

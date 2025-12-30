@@ -11,6 +11,8 @@ Behavior inventory (operator-visible)
 - Task chaining: when no manual tasks exist, command plans seed the task queue and auto-advance on success.
 - Privacy mode: `/privacy on` disables transcript and ledger logging.
 - Codex-style cadence: concise actions, explicit assumptions, and minimal questions unless blocked.
+- Task queueing: multi-part requests are split into ordered steps and executed in sequence.
+- Process stacking: plan -> execute -> verify -> summarize, then continue to the next queued task.
 
 Process stacking + live updates
 - Plan execution loop: per-command status with OK/FAIL and output capture.

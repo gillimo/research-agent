@@ -845,6 +845,9 @@ P20 ? UAT harness stability
 - [x] UX8: Heartbeat panel placement  
   Render a heartbeat/worklog summary below the main TUI panels.  
   Acceptance: heartbeat entries appear beneath main content in TUI.
+- [x] UX9: Task chaining expectations  
+  Document task queueing, chaining, and stacked process expectations in behavior docs.  
+  Acceptance: expected behavior and UX inventory mention queueing/chaining explicitly.
 - [x] UX7: Codex parity behavior section  
   Document Codex-style behavior expectations in `docs/expected_behavior.md`.  
   Acceptance: expected behavior doc lists Codex parity behaviors and UX inventory references it.
