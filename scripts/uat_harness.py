@@ -152,6 +152,9 @@ def main() -> int:
     mailbox_log = args.mailbox_log or (Path(scenario.get("mailbox_log")) if isinstance(scenario, dict) and scenario.get("mailbox_log") else None)
     if mailbox_mode and mailbox_log is None:
         mailbox_log = Path("logs") / "uat_mailbox.ndjson"
+    mailbox_duration = float(args.mailbox_duration)
+    if isinstance(scenario, dict) and "mailbox_duration" in scenario and "--mailbox-duration" not in sys.argv:
+        mailbox_duration = float(scenario.get("mailbox_duration") or mailbox_duration)
     event_log = args.event_log or (Path(scenario.get("event_log")) if isinstance(scenario, dict) and scenario.get("event_log") else None)
     screenshot_dir = args.screenshot_dir or (Path(scenario.get("screenshot_dir")) if isinstance(scenario, dict) and scenario.get("screenshot_dir") else None)
     snapshot_lines = int(args.snapshot_lines or (scenario.get("snapshot_lines") if isinstance(scenario, dict) else 40))
@@ -483,7 +486,7 @@ def main() -> int:
                 pass
 
     if mailbox_mode:
-        deadline = time.time() + float(args.mailbox_duration)
+        deadline = time.time() + mailbox_duration
         while time.time() < deadline:
             _flush_pending()
             time.sleep(0.1)

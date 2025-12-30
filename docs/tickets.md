@@ -746,6 +746,9 @@ P20 ? UAT harness stability
 - [x] UAT32: Gate mailbox follow-up on completion  
   Send the follow-up question only after "Done. OK" appears, and extend mailbox duration.  
   Acceptance: mailbox follow-up no longer lands mid-plan.
+- [x] UAT33: Respect scenario mailbox_duration  
+  Allow mailbox scenarios to override the default mailbox duration.  
+  Acceptance: mailbox runs honor `mailbox_duration` in scenario JSON.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
