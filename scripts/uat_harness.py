@@ -419,6 +419,8 @@ def main() -> int:
         input_when_event = step.get("input_when_event")
         if isinstance(text, str):
             should_send = True
+            if mailbox_mode and (input_when_text or input_when_event):
+                should_send = False
             if input_when_text:
                 if not _conditions_met(input_when_text, None):
                     should_send = False

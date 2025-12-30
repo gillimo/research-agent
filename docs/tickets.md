@@ -752,6 +752,9 @@ P20 ? UAT harness stability
 - [x] UAT34: Scope conditional inputs to new output  
   Track output/event cursors for pending inputs so conditions match only new output.  
   Acceptance: deferred inputs do not trigger on stale output.
+- [x] UAT35: Defer conditional inputs in mailbox mode  
+  Always queue conditional inputs in mailbox mode to avoid immediate sends.  
+  Acceptance: mailbox mode no longer sends conditional inputs before prompts appear.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
