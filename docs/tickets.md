@@ -719,6 +719,9 @@ P20 ? UAT harness stability
 - [x] UAT23: Wait for plan completion before follow-up  
   Ensure socket scenarios wait for plan completion text before sending the next question.  
   Acceptance: follow-ups are sent after "Done. OK" appears.
+- [x] UAT24: Handle outside-workspace prompt in scenarios  
+  Respond to the "Command touches outside workspace" confirmation before waiting for completion.  
+  Acceptance: scenario does not hang at the outside-workspace prompt.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
