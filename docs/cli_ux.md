@@ -35,6 +35,7 @@ UX cues
 - Status banner includes model/provider info and local-only warnings.
 - Outside-workspace commands prompt for confirmation before running.
 - Privacy mode (`/privacy on`) disables transcript and ledger persistence for the session.
+- Cloud calls show a sanitized prompt preview and require approval before sending.
 
 Optional cloud bridge (until integrated into `ask`)
 - `echo "prompt" | python scripts/researcher_bridge.py --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"`

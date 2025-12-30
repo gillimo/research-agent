@@ -38,6 +38,7 @@ Commands (current)
 - Bridge (optional cloud hop): `$env:CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"' ; echo "question" | python scripts/researcher_bridge.py --stdin --cloud-mode always`
 - Inline cloud hop: `echo "prompt" | python -m researcher ask --stdin --cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3` (sanitized, logs to `logs/cloud/`; `--cloud-mode always` to force).
 - `CLOUD_CMD` must be a single command without pipes or redirection; it runs without a shell.
+- Cloud calls show a sanitized prompt preview and require approval before sending (unless approval_policy=never).
 - SimpleIndex only: add `--simple-index` to `status`, `ingest`, or `ask` to skip FAISS and embeddings.
 - Ingest filtering: `python -m researcher ingest data/sample --ext txt,md --max-files 100` (dirs/globs supported). Ingest is local; a redacted note is sent to the Librarian.
 - Auto-ingest: if you mention a valid file path (or a Desktop filename) in chat, Martin ingests it automatically before answering.

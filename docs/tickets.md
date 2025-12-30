@@ -4,11 +4,11 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) G2: Cloud prompt preview + approve
-2) CL7: IPC timeout/cancel support
-3) CL8: IPC error taxonomy
-4) CL9: Sanitization assertions at boundaries
-5) CL11: Structured IPC logging
+1) CL7: IPC timeout/cancel support
+2) CL8: IPC error taxonomy
+3) CL9: Sanitization assertions at boundaries
+4) CL11: Structured IPC logging
+5) CL12: Inbox retention policy
 
 
 P0 – Safety/Secrets
@@ -471,7 +471,7 @@ P15 ? Project goal completion (local control + proprietary safety)
   Default to local-only unless explicitly enabled by the user.  
   Acceptance: config defaults to local-only; clear warning when enabling cloud.  
   Deps: CX18.
-- [ ] G2: Cloud prompt preview + approve  
+- [x] G2: Cloud prompt preview + approve  
   Show sanitized cloud prompt and require approval before sending.  
   Acceptance: user can approve/deny per cloud call.  
   Deps: CX14, CX33.

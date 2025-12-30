@@ -293,6 +293,21 @@ def _build_librarian_ingest_note(paths: List[str], max_files: int = 5, max_chars
     return "\n".join(parts)
 
 
+def _confirm_cloud_send(prompt: str, approval_policy: str, agent_mode: bool = False, as_json: bool = False) -> Tuple[bool, str]:
+    sanitized, _changed = sanitize.sanitize_prompt(prompt or "")
+    if approval_policy == "never" or agent_mode:
+        return True, sanitized
+    if as_json:
+        return False, sanitized
+    print("\033[96mmartin: Cloud preview (sanitized)\033[0m")
+    print(sanitized)
+    try:
+        resp = input("Send to cloud? (yes/no) ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        resp = "no"
+    return resp in {"y", "yes"}, sanitized
+
+
 def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional[List[str]] = None, max_files: int = 0, as_json: bool = False, skip_librarian: bool = False) -> int:
     if not paths:
         print("No files provided to ingest.", file=sys.stderr)
@@ -440,14 +455,19 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
     should_cloud = should_cloud_hop(cloud_mode, top_score, threshold)
     if should_cloud and not local_only:
         from researcher.cloud_bridge import _hash
+        exec_cfg = cfg.get("execution", {}) or {}
+        approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
         client = LibrarianClient()
-        sanitized_prompt, changed_cloud = sanitize.sanitize_prompt(prompt or "")
-        cloud_resp = client.query_cloud(
-            prompt=sanitized_prompt,
-            cloud_mode=cloud_mode,
-            cloud_cmd=effective_cloud_cmd,
-            cloud_threshold=cloud_threshold # Pass for context, though Librarian handles thresholding
-        )
+        allow_cloud, sanitized_prompt = _confirm_cloud_send(prompt or "", approval_policy, agent_mode=False, as_json=as_json)
+        if allow_cloud:
+            cloud_resp = client.query_cloud(
+                prompt=sanitized_prompt,
+                cloud_mode=cloud_mode,
+                cloud_cmd=effective_cloud_cmd,
+                cloud_threshold=cloud_threshold # Pass for context, though Librarian handles thresholding
+            )
+        else:
+            cloud_resp = {"status": "error", "message": "user_denied"}
         client.close() # Close connection after use
 
         # Adapt cloud_resp from Librarian to CloudCallResult format for existing logic
@@ -471,7 +491,7 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
             result_changed = changed
             result_hash = _hash(sanitized) # Re-hash for logging consistency if error
 
-        log_event(st, "ask_cloud_hop", cloud_mode=cloud_mode, rc=result_rc, redacted=(result_changed or changed_cloud), trigger_score=top_score, threshold=threshold, librarian_response_status=cloud_resp.get("status")) # Use state_manager's log_event
+        log_event(st, "ask_cloud_hop", cloud_mode=cloud_mode, rc=result_rc, redacted=(result_changed or False), trigger_score=top_score, threshold=threshold, librarian_response_status=cloud_resp.get("status")) # Use state_manager's log_event
         if result_ok and result_output:
             cloud_hits.append((0.0, {"path": "cloud", "chunk": result_output}))
             # --- Auto-update trigger: Ingest successful cloud answer ---
@@ -1828,12 +1848,15 @@ def cmd_chat(cfg, args) -> int:
                 prompt = (last_user_request or user_input).strip()
                 prompt = f"{prompt}\n\nUser feedback: {user_input}\nPlease answer correctly."
                 client = LibrarianClient()
-                sanitized_prompt, _changed_cloud = sanitize.sanitize_prompt(prompt or "")
-                cloud_resp = client.query_cloud(
-                    prompt=sanitized_prompt,
-                    cloud_mode="always",
-                    cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
-                )
+                allow_cloud, sanitized_prompt = _confirm_cloud_send(prompt or "", approval_policy, agent_mode=agent_mode, as_json=False)
+                if allow_cloud:
+                    cloud_resp = client.query_cloud(
+                        prompt=sanitized_prompt,
+                        cloud_mode="always",
+                        cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
+                    )
+                else:
+                    cloud_resp = {"status": "error", "message": "user_denied"}
                 client.close()
                 if cloud_resp.get("status") == "success":
                     result = cloud_resp.get("result", {})
@@ -1867,12 +1890,15 @@ def cmd_chat(cfg, args) -> int:
 
             def _try_cloud(prompt: str, reason: str) -> Optional[str]:
                 client = LibrarianClient()
-                sanitized_prompt, _changed_cloud = sanitize.sanitize_prompt(prompt or "")
-                cloud_resp = client.query_cloud(
-                    prompt=sanitized_prompt,
-                    cloud_mode="always",
-                    cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
-                )
+                allow_cloud, sanitized_prompt = _confirm_cloud_send(prompt or "", approval_policy, agent_mode=agent_mode, as_json=False)
+                if allow_cloud:
+                    cloud_resp = client.query_cloud(
+                        prompt=sanitized_prompt,
+                        cloud_mode="always",
+                        cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
+                    )
+                else:
+                    cloud_resp = {"status": "error", "message": "user_denied"}
                 client.close()
                 if cloud_resp.get("status") == "success":
                     result = cloud_resp.get("result", {})

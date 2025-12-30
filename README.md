@@ -42,6 +42,7 @@ Quick start
 - **Interactive Chat Session:**
   - `python -m researcher chat` or `martin`: Start a persistent interactive session with the researcher agent, leveraging Chef/Waiter orchestration, internal abilities, and smart command execution.
   - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/files [query|pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/privacy on|off|status`, `/keys`, `/retry`, `/onboarding`, `/context [refresh]`, `/plan`, `/outputs [ledger|export|search]`, `/export session <path>`, `/resume`, `/rag status`, `/tasks add|list|done <n>`, `/review on|off`, `/librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/rerun [command|test]`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+  - Cloud calls show a sanitized prompt preview and require approval before sending (unless approval_policy=never).
   - Tests: `/tests run <n>` executes a suggested command and records status.
   - Launcher: `powershell -ExecutionPolicy Bypass -File scripts\\install_martin.ps1` (uninstall via `scripts\\uninstall_martin.ps1`).
   - Starter RAG: `python -m researcher ingest docs/starter_rag --max-files 50`
