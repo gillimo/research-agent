@@ -30,3 +30,12 @@ def test_wait_for_prompt_text_advances_cursor() -> None:
     assert found
     found, _ = _wait_for_prompt_text(events, ["Approve running"], timeout=0.2, cursor=cursor)
     assert found
+
+
+def test_wait_for_prompt_text_ignores_non_prompt_events() -> None:
+    events = [
+        {"type": "output", "text": "You: "},
+        {"type": "prompt", "text": "Approve running these commands? "},
+    ]
+    found, _ = _wait_for_prompt_text(events, ["Approve running"], timeout=0.2)
+    assert found

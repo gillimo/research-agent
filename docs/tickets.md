@@ -833,6 +833,9 @@ P20 ? UAT harness stability
 - [x] UAT61: Prompt-text cursor coverage  
   Add a unit test to verify `_wait_for_prompt_text` advances the cursor between prompts.  
   Acceptance: sequential prompt waits succeed using the updated cursor.
+- [x] UAT62: Prompt-only event filtering test  
+  Add a unit test to ensure `_wait_for_prompt_text` ignores non-prompt events.  
+  Acceptance: prompt waits do not match stdout events.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
