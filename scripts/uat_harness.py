@@ -304,12 +304,15 @@ def main() -> int:
         if socket_conn is not None:
             payload = json.dumps({"type": "input", "text": text, "token": socket_token}, ensure_ascii=False) + "\n"
             try:
-                with socket.create_connection((args.socket_host, args.socket_port), timeout=1.0) as send_sock:
-                    send_sock.sendall(payload.encode("utf-8"))
+                socket_conn.sendall(payload.encode("utf-8"))
                 if args.echo:
                     print(f"[sent] {text}")
             except Exception:
-                pass
+                try:
+                    with socket.create_connection((args.socket_host, args.socket_port), timeout=1.0) as send_sock:
+                        send_sock.sendall(payload.encode("utf-8"))
+                except Exception:
+                    pass
             return
         proc.stdin.write(text + "\n")
         proc.stdin.flush()

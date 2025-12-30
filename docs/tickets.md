@@ -701,6 +701,9 @@ P20 ? UAT harness stability
 - [x] UAT17: Slow-start socket timeouts  
   Increase socket scenario `wait_for_event` timeouts to reduce flakiness.  
   Acceptance: loop_ready/prompt waits no longer time out on slow starts.
+- [x] UAT18: Persistent socket input send  
+  Send inputs over the persistent socket connection to ensure input_ack/input_used events are observed.  
+  Acceptance: socket runs receive input_ack/input_used for each input.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
