@@ -686,6 +686,9 @@ P20 ? UAT harness stability
 - [x] UAT12: Default event log in scenarios  
   Add `event_log` to socket scenarios so runs always emit NDJSON traces.  
   Acceptance: basic and mailbox scenarios write `logs/uat_events.ndjson`.
+- [x] UAT13: Snapshot capture for UX review  
+  Add `screenshot_dir` to write per-step output snapshots (tail) for quick UX review.  
+  Acceptance: scenarios emit `logs/uat_snapshots/step_*.txt`.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

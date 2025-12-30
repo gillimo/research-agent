@@ -10,6 +10,7 @@ Bug Log
 - 2025-12-30: Test socket parity lacked a context-summary assertion; added a scenario wait for `martin: Context:` in socket UAT.
 - 2025-12-30: UAT runs lacked a unified event trace outside mailbox mode; added optional `event_log` NDJSON output for any run.
 - 2025-12-30: Socket UAT scenarios did not specify `event_log`, leaving some runs without a consistent audit trail; added `event_log` to default scenarios.
+- 2025-12-30: UAT runs lacked step-level output snapshots for quick UX review; added optional `screenshot_dir` snapshots to the harness and scenarios.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

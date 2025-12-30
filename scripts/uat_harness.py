@@ -133,6 +133,8 @@ def main() -> int:
     parser.add_argument("--mailbox-log", type=Path, help="Mailbox log path (NDJSON).")
     parser.add_argument("--mailbox-duration", type=float, default=6.0, help="Seconds to keep session alive in mailbox mode.")
     parser.add_argument("--event-log", type=Path, help="Event log path (NDJSON) for any run.")
+    parser.add_argument("--screenshot-dir", type=Path, help="Capture output snapshots (TXT) after each step.")
+    parser.add_argument("--snapshot-lines", type=int, default=40, help="Lines to keep per snapshot (tail).")
     args = parser.parse_args()
 
     scenario = _load_scenario(args.scenario)
@@ -151,6 +153,10 @@ def main() -> int:
     if mailbox_mode and mailbox_log is None:
         mailbox_log = Path("logs") / "uat_mailbox.ndjson"
     event_log = args.event_log or (Path(scenario.get("event_log")) if isinstance(scenario, dict) and scenario.get("event_log") else None)
+    screenshot_dir = args.screenshot_dir or (Path(scenario.get("screenshot_dir")) if isinstance(scenario, dict) and scenario.get("screenshot_dir") else None)
+    snapshot_lines = int(args.snapshot_lines or (scenario.get("snapshot_lines") if isinstance(scenario, dict) else 40))
+    if screenshot_dir is not None:
+        screenshot_dir.mkdir(parents=True, exist_ok=True)
     auto_wait = scenario.get("auto_wait", True) if isinstance(scenario, dict) else True
     if args.no_auto_wait:
         auto_wait = False
@@ -386,6 +392,16 @@ def main() -> int:
         sleep_for = step.get("sleep", args.delay)
         if sleep_for:
             time.sleep(float(sleep_for))
+        if screenshot_dir is not None:
+            with output_lock:
+                snapshot = "".join(output_buffer)
+            lines = snapshot.splitlines()
+            tail = "\n".join(lines[-snapshot_lines:]) if snapshot_lines > 0 else snapshot
+            filename = f"step_{event_cursor:03d}.txt"
+            try:
+                (screenshot_dir / filename).write_text(tail, encoding="utf-8")
+            except Exception:
+                pass
 
     if mailbox_mode:
         time.sleep(float(args.mailbox_duration))

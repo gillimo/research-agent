@@ -6,6 +6,8 @@
   "use_socket": true,
   "socket_token": "uat-token",
   "event_log": "logs/uat_events.ndjson",
+  "screenshot_dir": "logs/uat_snapshots",
+  "snapshot_lines": 40,
   "steps": [
     {
       "wait_for_event": "loop_ready",
