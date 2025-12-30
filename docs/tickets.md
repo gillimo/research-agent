@@ -716,6 +716,9 @@ P20 ? UAT harness stability
 - [x] UAT22: Input wait fallback  
   Accept matching `input_ack`/`input_used` events when the wait misses the exact signal.  
   Acceptance: socket runs avoid false "input not consumed" warnings when events are present.
+- [x] UAT23: Wait for plan completion before follow-up  
+  Ensure socket scenarios wait for plan completion text before sending the next question.  
+  Acceptance: follow-ups are sent after "Done. OK" appears.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

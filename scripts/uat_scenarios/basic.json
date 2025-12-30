@@ -38,6 +38,10 @@
       "input_timeout": 10
     },
     {
+      "wait_for": "Done. OK",
+      "timeout": 60
+    },
+    {
       "wait_for_event": "prompt",
       "timeout": 30
     },
