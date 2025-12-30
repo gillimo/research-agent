@@ -740,6 +740,9 @@ P20 ? UAT harness stability
 - [x] UAT30: Deferred inputs for mailbox mode  
   Queue conditional inputs and send them once `input_when_text/event` becomes true.  
   Acceptance: mailbox runs can answer prompts asynchronously without skipping inputs.
+- [x] UAT31: Extend mailbox duration  
+  Increase mailbox scenario duration to allow prompts and deferred inputs to fire.  
+  Acceptance: mailbox runs have enough time for approvals to appear.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

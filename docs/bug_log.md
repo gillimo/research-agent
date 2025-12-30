@@ -29,6 +29,7 @@ Bug Log
 - 2025-12-30: Mailbox runs sent approval responses too early when waits were skipped; added `input_when_text` gating for approval prompts.
 - 2025-12-30: Mailbox mode skips conditional inputs because conditions are checked immediately and not retried; needs deferred input queue.
 - 2025-12-30: Added deferred input queue so mailbox mode can send conditional inputs once prompts appear.
+- 2025-12-30: Mailbox duration was too short for prompts to appear; extended mailbox scenario duration to 20s.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
