@@ -37,3 +37,6 @@ Open decisions
 - Default posture for local-only mode (opt-in vs opt-out).
 
 Signed: Codex (2025-12-18)
+
+State snapshot
+- Ironbridge (2025-12-29): `docs/state_snapshot_ironbridge.md`

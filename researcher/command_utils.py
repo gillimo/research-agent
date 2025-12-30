@@ -1,8 +1,10 @@
 import os
 import re
 import shlex
+import tempfile
+import subprocess
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 
 # --- Constants for command preprocessing ---
 CMD_LINE_RE = re.compile(r"^\s*command:\s*(.+)\s*$")
@@ -247,3 +249,54 @@ def classify_command_risk(
         return {"level": level, "reasons": reasons}
 
     return {"level": "low", "reasons": []}
+
+
+def edit_commands_in_editor(commands: List[str]) -> List[str]:
+    """Open a temp file for editing commands and return the updated list."""
+    if not commands:
+        return []
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+    if os.name == "nt" and not editor:
+        editor = "notepad"
+    if not editor:
+        editor = "vi"
+    with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".cmds", encoding="utf-8") as f:
+        path = f.name
+        f.write("\n".join(commands) + "\n")
+    try:
+        subprocess.run([editor, path], check=False)
+        with open(path, "r", encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f.readlines()]
+        updated = [ln for ln in lines if ln]
+        return updated or commands
+    finally:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
+def edit_commands_inline(commands: List[str]) -> List[str]:
+    """Inline editor for commands using a simple text buffer prompt."""
+    if not commands:
+        return []
+    print("\033[96mmartin: Inline editor\033[0m")
+    print("Edit the command list below. Finish with a single line: .save (or .abort to cancel).")
+    print("--- current commands ---")
+    for line in commands:
+        print(line)
+    print("--- enter updated commands ---")
+    updated: List[str] = []
+    while True:
+        try:
+            line = input()
+        except (EOFError, KeyboardInterrupt):
+            return commands
+        marker = line.strip().lower()
+        if marker == ".save":
+            break
+        if marker == ".abort":
+            return commands
+        if line.strip():
+            updated.append(line.strip())
+    return updated or commands

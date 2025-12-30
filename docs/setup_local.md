@@ -31,6 +31,7 @@ ollama run phi3 "hi"  # quick smoke test
 
 Commands (current)
 - Researcher CLI: `python -m researcher status`, `python -m researcher ingest data/sample/readme.txt`, `echo "test" | python -m researcher ask --stdin`, `python -m researcher plan --stdin --run`, `python -m researcher nudge`, `python -m researcher supervise`.
+- Rich TUI: `python -m researcher tui`.
 - Bridge (optional cloud hop): `$env:CLOUD_CMD='codex --model gpt-4o --prompt "{prompt}"' ; echo "question" | python scripts/researcher_bridge.py --stdin --cloud-mode always`
 - Inline cloud hop: `echo "prompt" | python -m researcher ask --stdin --cloud-mode auto --cloud-cmd "$env:CLOUD_CMD" --cloud-threshold 0.3` (sanitized, logs to `logs/cloud/`; `--cloud-mode always` to force).
 - SimpleIndex only: add `--simple-index` to `status`, `ingest`, or `ask` to skip FAISS and embeddings.
@@ -39,7 +40,8 @@ Commands (current)
 - Logs: `logs/local.log` (rotating) captures ask/ingest/plan/nudge activity.
  - Cloud logs: `logs/cloud/cloud.ndjson` captures cloud call events (hashes/redaction flags).
  - Supervisor loop: `python -m researcher supervise --idle-seconds 300 --sleep-seconds 30` to emit idle prompts.
-- Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/context [refresh]`, `/plan`, `/outputs`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+- Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/files [query|pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/context [refresh]`, `/plan`, `/outputs`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+- Test runs: use `/tests run <n>` from the suggested list to execute and record status.
 - Additional: `/export session <path>`, `/resume`, `/rag status`, `/tasks add|list|done <n>`, `/review on|off`, `/librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>`.
 
 Notes

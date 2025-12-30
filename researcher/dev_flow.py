@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 from researcher.state_manager import load_state, save_state, log_event, ROOT_DIR
 from researcher.config_loader import load_config
 from researcher.llm_utils import get_thinking_gpt_response
+from researcher.file_utils import print_quick_open_hints
 
 # --- Constants (adapted from Martin) ---
 # WORKSPACE_DIR will be determined dynamically by _ensure_workspace
@@ -81,6 +82,7 @@ def _preview_and_confirm(path: Path, before: str, after: str) -> bool:
         print(f"File: {path}")
         print("Hint: hunk headers like @@ -a,b +c,d indicate line ranges.")
         print("\n".join(diff_lines))
+    print_quick_open_hints(path, diff_lines)
     if _auto_apply_enabled():
         return True
     return _ask_yes_no("Apply these changes?")

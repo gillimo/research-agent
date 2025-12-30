@@ -3,10 +3,11 @@ import glob
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from researcher.resource_registry import list_resources
 
 def get_slash_commands() -> List[str]:
     return [
-        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks",
+        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks",
         "/abilities", "/resources", "/resource", "/tests", "/rag",
         "/agent", "/cloud", "/ask", "/ingest", "/compress", "/signoff", "/exit", "/catalog", "/review",
     ]
@@ -20,6 +21,10 @@ def get_command_descriptions() -> Dict[str, str]:
         "/memory": "show memory snapshots",
         "/history": "show recent inputs",
         "/palette": "command palette + recent inputs",
+        "/files": "file picker",
+        "/open": "show file snippet at a line",
+        "/worklog": "show recent worklog",
+        "/clock": "clock in/out",
         "/context": "show context pack",
         "/plan": "show last plan",
         "/outputs": "list saved outputs",
@@ -133,11 +138,18 @@ def shorten_output(text: str, max_len: int = 400) -> str:
     return s[:max_len].rstrip() + "..."
 
 
-def build_palette_entries(query: str, slash_commands: List[str], session_transcript: List[str]) -> List[tuple[str, str]]:
-    cmd_matches = [c for c in slash_commands if _fuzzy_match(query, c.lower())]
+def build_palette_entries(
+    query: str,
+    slash_commands: List[str],
+    session_transcript: List[str],
+    root: Optional[Path] = None,
+) -> List[tuple[str, str]]:
+    root = root or Path.cwd()
+    q = (query or "").lower()
+    cmd_matches = [c for c in slash_commands if _fuzzy_match(q, c.lower())]
     history_inputs = [ln for ln in session_transcript if ln.startswith("You: ")]
-    if query:
-        hist_matches = [ln for ln in history_inputs if query in ln.lower()]
+    if q:
+        hist_matches = [ln for ln in history_inputs if q in ln.lower()]
     else:
         hist_matches = history_inputs[-10:]
     entries: List[tuple[str, str]] = []
@@ -145,6 +157,33 @@ def build_palette_entries(query: str, slash_commands: List[str], session_transcr
         entries.append(("cmd", c))
     for ln in hist_matches[-10:]:
         entries.append(("input", ln))
+    if q:
+        try:
+            files = build_file_entries(q, max_items=100, max_depth=4, root=root)
+        except Exception:
+            files = []
+        for p in files[:10]:
+            entries.append(("file", p))
+        try:
+            from researcher.test_helpers import suggest_test_commands
+            tests = suggest_test_commands(root)
+        except Exception:
+            tests = []
+        for t in tests:
+            if q in t.lower():
+                entries.append(("test", t))
+        out_dir = root / "logs" / "outputs"
+        if out_dir.exists():
+            try:
+                outputs = sorted(out_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+            except Exception:
+                outputs = []
+            for p in outputs:
+                val = str(p)
+                if q in val.lower():
+                    entries.append(("output", val))
+                    if len([e for e in entries if e[0] == "output"]) >= 10:
+                        break
     return entries
 
 
@@ -155,42 +194,55 @@ def render_palette(query: str, slash_commands: List[str], command_descriptions: 
         from rich.panel import Panel
         from rich.table import Table
         console = Console()
-        panels = []
-        cmd_entries = [e for e in entries if e[0] == "cmd"]
-        input_entries = [e for e in entries if e[0] == "input"]
-        if cmd_entries:
-            table = Table(title="Commands", show_header=True, header_style="cyan")
-            table.add_column("#", style="dim", width=4)
-            table.add_column("cmd", style="white")
-            table.add_column("desc", style="dim")
-            for idx, (_kind, cmd) in enumerate(cmd_entries, 1):
-                table.add_row(str(idx), cmd, command_descriptions.get(cmd, ""))
-            panels.append(Panel(table, title="Palette"))
-        if input_entries:
-            table = Table(title="Recent inputs", show_header=True, header_style="cyan")
-            table.add_column("#", style="dim", width=4)
-            table.add_column("input", style="white")
-            for idx, (_kind, ln) in enumerate(input_entries, 1):
-                table.add_row(str(idx + len(cmd_entries)), ln)
-            panels.append(Panel(table, title="History"))
-        if panels:
-            for p in panels:
-                console.print(p)
-            return entries
+        table = Table(title="Palette", show_header=True, header_style="cyan")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("type", style="dim", width=8)
+        table.add_column("value", style="white")
+        table.add_column("desc", style="dim")
+        for idx, (kind, value) in enumerate(entries, 1):
+            desc = command_descriptions.get(value, "") if kind == "cmd" else ""
+            table.add_row(str(idx), kind, value, desc)
+        console.print(Panel(table, title="Palette"))
+        return entries
     except Exception:
         pass
     print("martin: Command palette")
     if entries:
         for idx, (kind, value) in enumerate(entries, 1):
-            if kind == "cmd":
-                desc = command_descriptions.get(value, "")
-                suffix = f" - {desc}" if desc else ""
-                print(f"{idx}. {value}{suffix}")
-            else:
-                print(f"{idx}. {value}")
+            desc = command_descriptions.get(value, "") if kind == "cmd" else ""
+            suffix = f" - {desc}" if desc else ""
+            print(f"{idx}. [{kind}] {value}{suffix}")
     else:
         print("martin: No matches.")
     return entries
+
+
+def build_file_entries(query: str, max_items: int = 200, max_depth: int = 4, root: Optional[Path] = None) -> List[str]:
+    items = list_resources(root=root or Path.cwd(), max_items=max_items, max_depth=max_depth)
+    paths = [i.get("path", "") for i in items if isinstance(i, dict)]
+    if not query:
+        return [p for p in paths if p]
+    q = query.lower()
+    return [p for p in paths if p and q in p.lower()]
+
+
+def render_file_picker(paths: List[str], title: str = "Files") -> None:
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        console = Console()
+        table = Table(title=title, show_header=True, header_style="cyan")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("path", style="white")
+        for idx, p in enumerate(paths[:30], 1):
+            table.add_row(str(idx), p)
+        console.print(table)
+        return
+    except Exception:
+        pass
+    print("martin: Files:")
+    for idx, p in enumerate(paths[:30], 1):
+        print(f"{idx}. {p}")
 
 
 def render_history(lines: List[str], title: str = "Recent input history") -> None:
@@ -273,3 +325,29 @@ def handle_history_command(
         return None
     render_history(lines[-limit:], title="Recent input history")
     return None
+
+
+def render_status_banner(context_cache: Dict[str, object], last_command: Dict[str, object], mode: str = "") -> None:
+    git_line = ""
+    try:
+        git_status = (context_cache.get("git_status") or "").splitlines()
+        git_line = git_status[0] if git_status else ""
+    except Exception:
+        git_line = ""
+    last_cmd = (last_command or {}).get("cmd") or ""
+    last_rc = (last_command or {}).get("rc")
+    status = "ok" if (last_command or {}).get("ok") else "fail"
+    suffix = f" | last: {status} ({last_rc}) {last_cmd}" if last_cmd else ""
+    mode_txt = f" | mode: {mode}" if mode else ""
+    line = f"{git_line}{mode_txt}{suffix}".strip()
+    if not line:
+        return
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        console = Console()
+        console.print(Panel(line, title="Workspace", style="cyan"))
+        return
+    except Exception:
+        pass
+    print(f"martin: {line}")

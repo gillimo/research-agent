@@ -106,8 +106,17 @@ def _ability_dev_create(payload: str) -> str:
         p = Path(path)
         if not p.exists():
             return "failed: path does not exist (append-only)"
-        with p.open("a", encoding="utf-8") as f:
-            f.write("\n" + content.rstrip() + "\n")
+        try:
+            from researcher.file_utils import preview_write
+            before = p.read_text(encoding="utf-8")
+        except Exception:
+            before = ""
+        after = before + ("\n" + content.rstrip() + "\n")
+        if preview_write(p, after):
+            with p.open("a", encoding="utf-8") as f:
+                f.write("\n" + content.rstrip() + "\n")
+        else:
+            return "skipped: change not approved"
         return "ok"
     ok = dev_flow(payload or "")
     return "ok" if ok else "failed"

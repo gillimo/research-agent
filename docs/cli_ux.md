@@ -18,7 +18,10 @@ Recommended flow
 5) Nudge/oversight: `python -m researcher nudge [--idle-seconds 300]`  
    Emits a nudge if logs show idleness beyond the threshold.
 6) Interactive chat: `python -m researcher chat`  
-   Slash commands include `/history`, `/palette [pick <n>]`, and `/context refresh`.
+   Slash commands include `/history`, `/palette [pick <n>]`, `/files [pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, and `/context refresh`.  
+   A workspace status banner summarizes git status and last command result.
+7) TUI shell: `python -m researcher tui`  
+   Keyboard-driven panels for palette, tasks, context, outputs, and process worklog (use `j/k` or arrows to navigate).
 
 UX cues
 - Tables use Rich for readable columns and headers.
@@ -26,6 +29,8 @@ UX cues
 - `plan --run` reports `OK`/`FAIL(code)` per command with captured stdout/stderr.
 - Dev flow previews diffs before applying generated code changes.
 - Logs for all commands go to `logs/local.log` (rotating).
+- Command approvals support inline (`inline`) and external (`editor`) editing options for multi-command edits.
+- `/tests` shows the last-run status and supports `/tests run <n>` to execute a suggested command.
 
 Optional cloud bridge (until integrated into `ask`)
 - `echo "prompt" | python scripts/researcher_bridge.py --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"`

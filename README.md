@@ -9,6 +9,7 @@ Current stack
 - Interface: The `researcher` CLI now offers several subcommands for core functionality and an interactive `chat` mode. The `martin` launcher wraps `python -m researcher chat`.
   - Core commands: `status`, `ingest`, `ask`, `plan`, `nudge`, `abilities`, `resources`, `resource`, `supervise`.
   - Interactive chat: `python -m researcher chat` or `martin` (provides an interactive agent session).
+  - Rich TUI shell: `python -m researcher tui` (keyboard-driven panels).
   - Cloud hops are integrated directly into `cmd_ask` and the interactive `chat` session based on configuration.
 - Artifact: Sanitized Martin v5.1 reference at `martin_v5_1_reference.py` (requires `OPENAI_API_KEY` in `.env` for direct use).
 
@@ -39,7 +40,8 @@ Quick start
   - `python -m researcher librarian status|start|shutdown`: Control the Librarian process.
 - **Interactive Chat Session:**
   - `python -m researcher chat` or `martin`: Start a persistent interactive session with the researcher agent, leveraging Chef/Waiter orchestration, internal abilities, and smart command execution.
-  - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/context [refresh]`, `/plan`, `/outputs`, `/export session <path>`, `/resume`, `/rag status`, `/tasks add|list|done <n>`, `/review on|off`, `/librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+  - Slash commands: `/help`, `/clear`, `/status`, `/memory`, `/history`, `/palette [query|pick <n>]`, `/files [query|pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/context [refresh]`, `/plan`, `/outputs`, `/export session <path>`, `/resume`, `/rag status`, `/tasks add|list|done <n>`, `/review on|off`, `/librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>`, `/abilities`, `/resources`, `/resource <path>`, `/tests`, `/agent on|off|status`, `/cloud on|off`, `/ask <q>`, `/ingest <path>`, `/compress`, `/signoff`, `/exit`.
+  - Tests: `/tests run <n>` executes a suggested command and records status.
 - **Auto-Update Configuration (in `config/local.yaml` or directly in code/env):**
   - `auto_update.ingest_threshold`: Define a `top_score` threshold (e.g., `0.1`) below which local retrievals will log a suggestion for ingesting more data.
   - `auto_update.ingest_cloud_answers`: Set to `true` to ingest successful cloud answers into the local RAG.

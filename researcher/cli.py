@@ -20,6 +20,7 @@ from researcher.answer import compose_answer
 from researcher.supervisor import nudge_message
 from researcher.local_llm import run_ollama_chat
 from researcher import chat_ui
+from researcher.tui_shell import run_tui
 
 # New imports for Librarian client
 from researcher.librarian_client import LibrarianClient
@@ -55,10 +56,12 @@ def _store_long_output(output: str, label: str) -> str:
     if not output or len(output) <= 4000:
         return ""
     try:
+        from researcher.file_utils import preview_write
         _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
         path = _OUTPUT_DIR / f"{ts}_{label}.log"
-        path.write_text(output, encoding="utf-8")
+        if preview_write(path, output):
+            path.write_text(output, encoding="utf-8")
         return str(path)
     except Exception:
         return ""
@@ -482,15 +485,19 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
 # New cmd_chat function
 def cmd_chat(cfg, args) -> int:
     from tqdm import tqdm
-    from researcher.command_utils import extract_commands, classify_command_risk
+    from researcher.command_utils import extract_commands, classify_command_risk, edit_commands_in_editor, edit_commands_inline
     from researcher.llm_utils import _post_responses, _extract_output_text, MODEL_MAIN, interaction_history, diagnose_failure, current_username, rephraser
     from researcher.orchestrator import decide_next_step, dispatch_internal_ability
     from researcher.resource_registry import list_resources, read_resource
     from researcher.runner import run_command_smart_capture, enforce_sandbox
     from researcher.librarian_client import LibrarianClient
     from researcher.system_context import get_system_context
-    from researcher.tool_ledger import append_tool_entry, read_recent, export_json
+    from researcher.tool_ledger import append_tool_entry, read_recent, export_json, build_export_json
+    from researcher.file_utils import preview_write
+    from researcher.worklog import append_worklog, read_worklog
+    from researcher.logbook_utils import append_logbook_entry
     import shlex
+    import subprocess
 
     def _handle_librarian_notification(message: Dict[str, Any]) -> None:
         try:
@@ -507,6 +514,79 @@ def cmd_chat(cfg, args) -> int:
             save_state(st)
         except Exception:
             pass
+    def _mo_preflight_check() -> None:
+        root = Path.cwd()
+        checks = []
+        git_status = ""
+        git_ok = (root / ".git").exists()
+        if git_ok:
+            try:
+                res = subprocess.run(["git", "status", "-sb"], capture_output=True, text=True, check=False)
+                git_status = (res.stdout or res.stderr or "").splitlines()[:1]
+                git_status = git_status[0] if git_status else ""
+            except Exception:
+                git_status = "git status unavailable"
+        checks.append(("git", git_status or "no git repo"))
+        checks.append(("tickets", "ok" if (root / "docs" / "tickets.md").exists() else "missing"))
+        checks.append(("bug_log", "ok" if (root / "docs" / "bug_log.md").exists() else "missing"))
+        checks.append(("logbook", "ok" if (root / "docs" / "logbook.md").exists() else "missing"))
+        st = load_state()
+        last_test = st.get("tests_last", {}) if isinstance(st, dict) else {}
+        if last_test:
+            checks.append(("last_test", f"{'ok' if last_test.get('ok') else 'fail'} {last_test.get('ts','')}"))
+        else:
+            checks.append(("last_test", "none (run /tests)"))
+        print("\033[96mmartin: Preflight checks\033[0m")
+        for key, val in checks:
+            print(f"- {key}: {val}")
+        missing = [c for c in checks if c[1] in ("missing", "none (run /tests)")]
+        if missing:
+            print("martin: Next steps: address missing items before heavy changes.")
+        append_worklog("plan", "preflight checks complete")
+
+    def _ensure_handle() -> str:
+        st = load_state()
+        handle = ""
+        if isinstance(st, dict):
+            handle = st.get("operator_handle", "") or ""
+        if not handle:
+            default_handle = current_username or "user"
+            try:
+                entered = input(f"martin: Handle for logbook? (enter for {default_handle}) ").strip()
+            except (EOFError, KeyboardInterrupt):
+                entered = ""
+            handle = entered or default_handle
+            if isinstance(st, dict):
+                st["operator_handle"] = handle
+                save_state(st)
+        return handle
+
+    def _prompt_clock(action: str) -> None:
+        handle = _ensure_handle()
+        try:
+            note = input(f"martin: {action} note (or .skip <reason>): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            note = ".skip interrupted"
+        if note.startswith(".skip"):
+            reason = note.replace(".skip", "", 1).strip() or "no reason"
+            append_logbook_entry(handle, action, "", skipped_reason=reason)
+            append_worklog("thinking", f"{action} skipped: {reason}")
+            return
+        append_logbook_entry(handle, action, note or "ok")
+        append_worklog("doing", f"{action} recorded")
+
+    def _run_cmd_with_worklog(cmd: str) -> Tuple[bool, str, str, int]:
+        append_worklog("doing", f"run: {cmd}")
+        ok, stdout, stderr, rc = run_command_smart_capture(cmd)
+        append_worklog("done", f"rc={rc} {cmd}")
+        return ok, stdout, stderr, rc
+
+    def _mo_exit_check() -> None:
+        st = load_state()
+        session_start = st.get("session_start_ts", "") if isinstance(st, dict) else ""
+        last_signoff = st.get("last_signoff_ts", "") if isinstance(st, dict) else ""
+        if not last_signoff or (session_start and last_signoff < session_start):
+            print("martin: Reminder: run /signoff for a session summary.")
     # Start the socket server
     socket_server_cfg = cfg.get("socket_server", {})
     server = SocketServer(
@@ -520,6 +600,14 @@ def cmd_chat(cfg, args) -> int:
         st = load_state()
         sess = SessionCtx(st)
         sess.begin()
+        try:
+            st = load_state()
+            st["session_start_ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            save_state(st)
+        except Exception:
+            pass
+        _mo_preflight_check()
+        _prompt_clock("Clock-in")
         logger = _get_cli_logger(cfg)
         logger.info("chat_start")
         last_user_request = ""
@@ -543,7 +631,11 @@ def cmd_chat(cfg, args) -> int:
         session_transcript = []
         slash_commands = chat_ui.get_slash_commands()
         command_descriptions = chat_ui.get_command_descriptions()
+        if "/files" not in slash_commands:
+            slash_commands.append("/files")
+        command_descriptions.setdefault("/files", "file picker")
         last_palette_entries = []
+        last_file_entries = []
         context_cache = {}
         # Load persisted memory (best-effort).
         mem = st.get("memory", {}) if isinstance(st, dict) else {}
@@ -590,6 +682,11 @@ def cmd_chat(cfg, args) -> int:
                 st["context_cache"] = context_cache
                 save_state(st)
             chat_ui.print_context_summary(context_cache)
+            try:
+                last_cmd_summary = load_state().get("last_command_summary", {}) or {}
+            except Exception:
+                last_cmd_summary = {}
+            chat_ui.render_status_banner(context_cache, last_cmd_summary, mode=("agent" if agent_mode else "manual"))
         except Exception:
             pass
         readline_mod = None
@@ -667,7 +764,7 @@ def cmd_chat(cfg, args) -> int:
                     should_exit = True
                     return True
                 if name == "help":
-                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /context [refresh], /plan, /outputs [ledger|export <path>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
+                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /context [refresh], /plan, /outputs [ledger|export <path>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
                     return True
                 if name == "clear":
                     transcript = []
@@ -682,6 +779,25 @@ def cmd_chat(cfg, args) -> int:
                     print("martin: Compressed summary:")
                     print(summary)
                     return True
+                if name == "worklog":
+                    items = read_worklog(10)
+                    if not items:
+                        print("martin: No worklog entries yet.")
+                        return True
+                    print("martin: Worklog (last 10)")
+                    for entry in items:
+                        print(f"- {entry.get('ts','')} {entry.get('kind','')}: {entry.get('text','')}")
+                    return True
+                if name == "clock":
+                    sub = args[0].lower() if args else ""
+                    if sub in ("in", "clock-in"):
+                        _prompt_clock("Clock-in")
+                        return True
+                    if sub in ("out", "clock-out"):
+                        _prompt_clock("Clock-out")
+                        return True
+                    print("martin: Use /clock in or /clock out.")
+                    return True
                 if name == "signoff":
                     if transcript:
                         summary = rephraser("\n".join(transcript)[-4000:])
@@ -689,6 +805,12 @@ def cmd_chat(cfg, args) -> int:
                         summary = "No transcript captured."
                     print("martin: Signoff")
                     print(summary)
+                    try:
+                        st = load_state()
+                        st["last_signoff_ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        save_state(st)
+                    except Exception:
+                        pass
                     print("martin: Session complete. Anything else?")
                     return True
                 if name == "status":
@@ -736,6 +858,52 @@ def cmd_chat(cfg, args) -> int:
                             print("martin: Press Up arrow to edit/reuse.")
                         return True
                     last_palette_entries = chat_ui.render_palette(query, slash_commands, command_descriptions, session_transcript)
+                    return True
+                if name == "files":
+                    query = " ".join(args).strip().lower()
+                    if args and args[0].lower() == "pick":
+                        try:
+                            idx = int(args[1]) if len(args) > 1 else 0
+                        except Exception:
+                            idx = 0
+                        if not last_file_entries:
+                            last_file_entries = chat_ui.build_file_entries("")
+                            chat_ui.render_file_picker(last_file_entries)
+                        if not (1 <= idx <= len(last_file_entries)):
+                            print("martin: Use /files pick <n> from the last file list.")
+                            return True
+                        picked = last_file_entries[idx - 1]
+                        last_user_request = picked
+                        print(f"martin: Picked file: {picked}")
+                        print("martin: Press Up arrow to edit/reuse.")
+                        return True
+                    last_file_entries = chat_ui.build_file_entries(query)
+                    if not last_file_entries:
+                        print("martin: No files found.")
+                        return True
+                    chat_ui.render_file_picker(last_file_entries)
+                    return True
+                if name == "open":
+                    from researcher.file_utils import render_snippet
+                    if not args:
+                        print("martin: Use /open <path>:<line>.")
+                        return True
+                    target = " ".join(args).strip()
+                    path_part = target
+                    line_no = None
+                    if ":" in target:
+                        left, right = target.rsplit(":", 1)
+                        if right.isdigit():
+                            path_part = left
+                            try:
+                                line_no = int(right)
+                            except Exception:
+                                line_no = None
+                    path = Path(os.path.expanduser(os.path.expandvars(path_part)))
+                    if not path.exists():
+                        print(f"martin: File not found: {path}")
+                        return True
+                    print(render_snippet(path, line_no))
                     return True
                 if name == "plan":
                     st = load_state()
@@ -792,8 +960,12 @@ def cmd_chat(cfg, args) -> int:
                     if args and args[0] == "export":
                         out_path = args[1] if len(args) > 1 else str(Path("logs") / "tool_ledger_export.json")
                         try:
-                            out = export_json(Path(out_path))
-                            print(f"martin: Exported tool ledger to {out}")
+                            content = build_export_json()
+                            if preview_write(Path(out_path), content):
+                                Path(out_path).write_text(content, encoding="utf-8")
+                                print(f"martin: Exported tool ledger to {out_path}")
+                            else:
+                                print("martin: Export cancelled.")
                         except Exception as e:
                             print(f"martin: Export failed ({e})")
                         return True
@@ -842,12 +1014,98 @@ def cmd_chat(cfg, args) -> int:
                     try:
                         from researcher.test_helpers import suggest_test_commands
                         cmds = suggest_test_commands(Path.cwd())
+                        st = load_state()
+                        last_test = st.get("tests_last", {}) if isinstance(st, dict) else {}
+                        if last_test:
+                            status = "ok" if last_test.get("ok") else "fail"
+                            print(f"martin: Last test: {status} rc={last_test.get('rc')} ({last_test.get('duration_s', 0):.2f}s) {last_test.get('cmd')}")
+                        if args and args[0].lower() == "run":
+                            if not cmds:
+                                print("martin: No test helpers detected in this folder.")
+                                return True
+                            try:
+                                idx = int(args[1]) if len(args) > 1 else 0
+                            except Exception:
+                                idx = 0
+                            if not (1 <= idx <= len(cmds)):
+                                print("martin: Use /tests run <n> from the suggested list.")
+                                return True
+                            cmd = cmds[idx - 1]
+                            exec_cfg = cfg.get("execution", {}) or {}
+                            approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
+                            sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
+                            command_allowlist = exec_cfg.get("command_allowlist") or []
+                            command_denylist = exec_cfg.get("command_denylist") or []
+                            risk = classify_command_risk(cmd, command_allowlist, command_denylist)
+                            if risk["level"] == "blocked":
+                                print("\033[93mmartin: Test command blocked by policy.\033[0m")
+                                return True
+                            allowed, reason = enforce_sandbox(cmd, sandbox_mode, str(Path.cwd()))
+                            if not allowed:
+                                if approval_policy != "never":
+                                    try:
+                                        resp = input(f"\033[93mmartin: Sandbox blocked this test command ({reason}). Override once? (yes/no)\033[0m ").strip().lower()
+                                    except (EOFError, KeyboardInterrupt):
+                                        resp = "no"
+                                    allowed = resp == "yes"
+                                if not allowed:
+                                    print("\033[93mmartin: Test command blocked by sandbox.\033[0m")
+                                    return True
+                            if approval_policy == "on-request":
+                                try:
+                                    confirm = input("\033[93mApprove running this test command? (yes/no)\033[0m ").strip().lower()
+                                except (EOFError, KeyboardInterrupt):
+                                    confirm = "no"
+                                if confirm != "yes":
+                                    print("\033[92mmartin: Aborting per approval policy.\033[0m")
+                                    return True
+                            t0 = time.perf_counter()
+                            ok, stdout, stderr, rc = _run_cmd_with_worklog(cmd)
+                            duration = time.perf_counter() - t0
+                            output_path = ""
+                            if stdout and len(stdout) > 4000:
+                                output_path = _store_long_output(stdout, "tests")
+                            if stdout:
+                                print(_format_output_for_display(stdout))
+                            if stderr:
+                                print(_format_output_for_display(stderr), file=sys.stderr)
+                            try:
+                                st = load_state()
+                                st["tests_last"] = {
+                                    "cmd": cmd,
+                                    "rc": rc,
+                                    "ok": ok,
+                                    "duration_s": round(duration, 3),
+                                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                }
+                                save_state(st)
+                                log_event(st, "tests_run", cmd=cmd, ok=ok, rc=rc, duration_s=duration)
+                            except Exception:
+                                pass
+                            try:
+                                append_tool_entry({
+                                    "command": cmd,
+                                    "cwd": str(Path.cwd()),
+                                    "rc": rc,
+                                    "ok": ok,
+                                    "duration_s": duration,
+                                    "stdout": stdout,
+                                    "stderr": stderr,
+                                    "output_path": output_path,
+                                    "risk": risk.get("level"),
+                                    "risk_reasons": risk.get("reasons"),
+                                    "sandbox_mode": sandbox_mode,
+                                    "approval_policy": approval_policy,
+                                })
+                            except Exception:
+                                pass
+                            return True
                         if not cmds:
                             print("martin: No test helpers detected in this folder.")
                             return True
-                        print("martin: Suggested test/run commands:")
-                        for c in cmds:
-                            print(f"- {c}")
+                        print("martin: Suggested test/run commands (use /tests run <n>):")
+                        for i, c in enumerate(cmds, 1):
+                            print(f"{i}. {c}")
                     except Exception:
                         print("martin: Unable to suggest tests here.")
                     return True
@@ -956,8 +1214,12 @@ def cmd_chat(cfg, args) -> int:
                         "tool_ledger": read_recent(limit=50),
                     }
                     try:
-                        Path(out_path).write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
-                        print(f"martin: Exported session to {out_path}")
+                        content = json.dumps(bundle, ensure_ascii=False, indent=2) + "\n"
+                        if preview_write(Path(out_path), content):
+                            Path(out_path).write_text(content, encoding="utf-8")
+                            print(f"martin: Exported session to {out_path}")
+                        else:
+                            print("martin: Export cancelled.")
                     except Exception as e:
                         print(f"martin: Export failed ({e})")
                     return True
@@ -1440,7 +1702,7 @@ def cmd_chat(cfg, args) -> int:
                 else:
                     while True:
                         try:
-                            confirm = input("\033[93mApprove running these commands? (yes/no/abort/edit/explain/dry-run)\033[0m ").strip().lower()
+                            confirm = input("\033[93mApprove running these commands? (yes/no/abort/edit/inline/editor/explain/dry-run)\033[0m ").strip().lower()
                         except (EOFError, KeyboardInterrupt):
                             confirm = "no"
                         if confirm == "explain":
@@ -1448,6 +1710,12 @@ def cmd_chat(cfg, args) -> int:
                             continue
                         if confirm == "edit":
                             terminal_commands = _edit_commands(terminal_commands)
+                            continue
+                        if confirm == "inline":
+                            terminal_commands = edit_commands_inline(terminal_commands)
+                            continue
+                        if confirm == "editor":
+                            terminal_commands = edit_commands_in_editor(terminal_commands)
                             continue
                         if confirm == "dry-run":
                             print("\033[92mmartin: Dry run only; no commands executed.\033[0m")
@@ -1539,11 +1807,11 @@ def cmd_chat(cfg, args) -> int:
                         allowed, reason = enforce_sandbox(step["cmd"], sandbox_mode, str(Path.cwd()))
                         if not allowed:
                             if _maybe_override_sandbox(reason):
-                                ok, stdout_text, stderr_text, rc = run_command_smart_capture(step["cmd"])
+                                ok, stdout_text, stderr_text, rc = _run_cmd_with_worklog(step["cmd"])
                             else:
                                 ok, stdout_text, stderr_text, rc = False, "", reason, 2
                         else:
-                            ok, stdout_text, stderr_text, rc = run_command_smart_capture(step["cmd"])
+                            ok, stdout_text, stderr_text, rc = _run_cmd_with_worklog(step["cmd"])
                     output = stdout_text
                     if stderr_text:
                         output = (stdout_text + "\n[stderr]\n" + stderr_text).strip()
@@ -1707,7 +1975,7 @@ def cmd_chat(cfg, args) -> int:
                                     confirm_fix = "yes"
                                 else:
                                     while True:
-                                        confirm_fix = input("\033[93mApprove running FIX commands? (yes/no/abort/edit/explain/dry-run)\033[0m ").strip().lower()
+                                        confirm_fix = input("\033[93mApprove running FIX commands? (yes/no/abort/edit/inline/editor/explain/dry-run)\033[0m ").strip().lower()
                                         if confirm_fix == "explain":
                                             print("\033[96mmartin: Rationale:\033[0m Fix commands proposed from diagnosis.")
                                             try:
@@ -1719,6 +1987,20 @@ def cmd_chat(cfg, args) -> int:
                                             new_terminal_commands = _edit_fix_commands(new_terminal_commands)
                                             try:
                                                 log_event(load_state(), "fix_command_decision", action="edit", count=len(new_terminal_commands))
+                                            except Exception:
+                                                pass
+                                            continue
+                                        if confirm_fix == "inline":
+                                            new_terminal_commands = edit_commands_inline(new_terminal_commands)
+                                            try:
+                                                log_event(load_state(), "fix_command_decision", action="inline", count=len(new_terminal_commands))
+                                            except Exception:
+                                                pass
+                                            continue
+                                        if confirm_fix == "editor":
+                                            new_terminal_commands = edit_commands_in_editor(new_terminal_commands)
+                                            try:
+                                                log_event(load_state(), "fix_command_decision", action="editor", count=len(new_terminal_commands))
                                             except Exception:
                                                 pass
                                             continue
@@ -1761,20 +2043,20 @@ def cmd_chat(cfg, args) -> int:
                                             allowed, reason = enforce_sandbox(new_command, sandbox_mode, str(Path.cwd()))
                                             if not allowed:
                                                 if _maybe_override_sandbox(reason):
-                                                    ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                                    ok2, out2, err2, rc2 = _run_cmd_with_worklog(new_command)
                                                 else:
                                                     ok2, out2, err2, rc2 = False, "", f"sandbox blocked: {reason}", 2
                                             else:
-                                                ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                                ok2, out2, err2, rc2 = _run_cmd_with_worklog(new_command)
                                     else:
                                         allowed, reason = enforce_sandbox(new_command, sandbox_mode, str(Path.cwd()))
                                         if not allowed:
                                             if _maybe_override_sandbox(reason):
-                                                ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                                ok2, out2, err2, rc2 = _run_cmd_with_worklog(new_command)
                                             else:
                                                 ok2, out2, err2, rc2 = False, "", f"sandbox blocked: {reason}", 2
                                         else:
-                                            ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                            ok2, out2, err2, rc2 = _run_cmd_with_worklog(new_command)
                                     combined = out2
                                     if err2:
                                         combined = (out2 + "\n[stderr]\n" + err2).strip()
@@ -1824,13 +2106,19 @@ def cmd_chat(cfg, args) -> int:
                 save_state(st)
             except Exception:
                 pass
+        _mo_exit_check()
+        _prompt_clock("Clock-out")
 
     finally:
         server.stop()
 
     if args.transcript:
         try:
-            Path(args.transcript).write_text("\n".join(transcript) + "\n", encoding="utf-8")
+            from researcher.file_utils import preview_write
+            content = "\n".join(transcript) + "\n"
+            out_path = Path(args.transcript)
+            if preview_write(out_path, content):
+                out_path.write_text(content, encoding="utf-8")
         except Exception as e:
             print(f"Warning: failed to write transcript ({e})", file=sys.stderr)
     sess.end()
@@ -1928,6 +2216,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_supervise_command(sub)
     add_abilities_command(sub)
     add_resources_command(sub)
+    add_tui_command(sub)
 
     return parser
 
@@ -1968,7 +2257,7 @@ def add_plan_command(sub):
 
 
 def handle_plan(cfg, args) -> int:
-    from researcher.command_utils import extract_commands, classify_command_risk
+    from researcher.command_utils import extract_commands, classify_command_risk, edit_commands_in_editor, edit_commands_inline
     from researcher.orchestrator import dispatch_internal_ability
     from researcher.runner import run_command_smart_capture, enforce_sandbox
     from researcher.tool_ledger import append_tool_entry
@@ -2025,7 +2314,7 @@ def handle_plan(cfg, args) -> int:
                 return edited
             while True:
                 try:
-                    confirm_run = input("\033[93mApprove running this command plan? (yes/no/abort/edit/explain/dry-run)\033[0m ").strip().lower()
+                    confirm_run = input("\033[93mApprove running this command plan? (yes/no/abort/edit/inline/editor/explain/dry-run)\033[0m ").strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     confirm_run = "no"
                 if confirm_run == "explain":
@@ -2033,6 +2322,12 @@ def handle_plan(cfg, args) -> int:
                     continue
                 if confirm_run == "edit":
                     cmds = _edit_commands(cmds)
+                    continue
+                if confirm_run == "inline":
+                    cmds = edit_commands_inline(cmds)
+                    continue
+                if confirm_run == "editor":
+                    cmds = edit_commands_in_editor(cmds)
                     continue
                 if confirm_run == "dry-run":
                     print("\033[92mmartin: Dry run only; no commands executed.\033[0m")
@@ -2366,6 +2661,16 @@ def handle_resource(cfg, args) -> int:
         return 0
     print(f"error: {output}", file=sys.stderr)
     return 1
+
+
+def add_tui_command(sub):
+    p_tui = sub.add_parser("tui", help="Start the Rich-based TUI shell")
+    p_tui.set_defaults(func=lambda cfg, args: handle_tui(cfg, args))
+
+
+def handle_tui(cfg, args) -> int:
+    run_tui()
+    return 0
 
 
 if __name__ == "__main__":

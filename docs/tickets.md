@@ -4,11 +4,12 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CX10: Rich TUI input (autocomplete/history/slash suggestions)
-2) CX5: Test/run helpers with suggested next steps
-3) CX6: Diff/patch preview workflow for edits
-4) DOC1: Cloud log path consistency
-5) DOC2: Agent mode trust disclosure
+1) CX39: Context pack auto-surface
+2) CX41: Review mode formatting parity
+3) CX50: Interrupt/cancel running commands
+4) CX51: Rerun last command/test shortcut
+5) CX52: Output search/filter UX
+6) G9: Seed RAG starter pack for Martin
 
 
 P0 – Safety/Secrets
@@ -241,3 +242,187 @@ P12 ? Trust process audit follow-ups
   Clarify `/agent on` auto-approves commands and how it interacts with approval policy.  
   Acceptance: AGENTS and architecture docs state the behavior explicitly.  
   Deps: CX1.
+
+P13 ? Codex UX parity (additional)
+- [x] CX34: Full TUI shell  
+  Multi-pane TUI with selectable lists, key-driven navigation, and status panels.  
+  Acceptance: interactive panes for palette, tasks, logs, and context; keyboard navigation without slash commands.  
+  Notes: selectable lists, detail panes, and key navigation added.  
+  Deps: CX10.
+- [x] CX35: Inline command editor UI  
+  Provide a dedicated editing UI for proposed commands with preview and edit buffer.  
+  Acceptance: user can open editor, modify, and approve without re-typing in prompt.  
+  Notes: inline editor prompt added alongside external editor flow.  
+  Deps: CX14.
+- [x] CX36: Diff viewer everywhere  
+  Ensure any edit path (not just dev_flow) shows unified diff preview with paging.  
+  Acceptance: all file edits show diff preview and optional paging before apply.  
+  Notes: diff previews now cover transcript/export/output logs and append-only ability writes.  
+  Deps: CX6, CX15.
+- [x] CX37: Interactive file picker  
+  Add a file/browser picker (recent files, repo tree) to insert paths into commands.  
+  Acceptance: palette or slash command opens a picker with filtering and selection.  
+  Deps: CX10.
+- [x] CX38: Quick-open from diffs  
+  Provide interactive “open file at line” actions from diff output.  
+  Acceptance: diff view offers selectable file/line targets.  
+  Notes: diff previews emit /open hints and slash command displays snippets.  
+  Deps: CX15, CX36.
+- [ ] CX39: Context pack auto-surface  
+  Automatically present context changes since last session without manual `/context`.  
+  Acceptance: on session start or before plan execution, display context delta.  
+  Deps: CX16.
+- [x] CX40: Task queue UX panel  
+  Add a dedicated task view (list/add/complete) in TUI with reminders.  
+  Acceptance: tasks visible/editable in TUI and via slash commands.  
+  Notes: TUI task list supports add (a) and done (x).  
+  Deps: CX17, CX34.
+- [ ] CX41: Review mode formatting parity  
+  Structured review output with sections for bugs, risks, and tests similar to Codex.  
+  Acceptance: review mode enforces structured output and includes test guidance block.  
+  Deps: CX9.
+- [x] CX42: Palette search across files/tests/outputs  
+  Extend palette to search files, recent outputs, and test commands.  
+  Acceptance: palette query returns file paths, test shortcuts, and output logs.  
+  Notes: palette now includes file/test/output matches when querying.  
+  Deps: CX34.
+- [x] CX43: Test run UI with last-run status  
+  Track last test command, status, and duration; surface in TUI/palette.  
+  Acceptance: `/tests` shows last-run status and rerun option.  
+  Notes: /tests run executes and records last status; TUI shows last test in context.  
+  Deps: CX5, CX34.
+- [x] CX44: TUI theming/branding consistency  
+  Standardize colors, headers, and panel layout to feel like Codex CLI.  
+  Acceptance: a consistent theme applies across TUI panels.  
+  Notes: consistent TUI theme applied to panels and headers.  
+  Deps: CX34.
+- [x] CX45: Workspace status banner  
+  Show branch/dirty state, last command status, and active mode at top of TUI.  
+  Acceptance: banner updates on changes and appears in chat.  
+  Deps: CX16, CX34.
+- [x] CX46: Active process chat panel  
+  Add a dedicated panel for "process chat" updates (thinking/plan/doing/done/next) streamed during work.  
+  Acceptance: panel is visible in TUI, updates in real time, and can be toggled.  
+  Notes: TUI process panel shows worklog entries and can be toggled.  
+  Deps: CX34, CX44.
+- [x] CX47: Heartbeat/worklog stream  
+  Emit periodic heartbeat summaries during long operations and store to a lightweight worklog.  
+  Acceptance: heartbeat appears in process panel; a `last 10` view is available.  
+  Notes: heartbeat emits to worklog and appears in process panel.  
+  Deps: CX46.
+- [x] CX48: Clock-in/out prompts in UI  
+  Prompt for clock-in on session start and clock-out on exit, writing to `docs/logbook.md`.  
+  Acceptance: prompts are visible in chat/TUI and can be skipped with a reason.  
+  Notes: chat and TUI prompt for clock-in/out with skip reasons.  
+  Deps: CX34.
+- [x] CX49: Internalize Martin coding MO  
+  Bake the operator guide rules into runtime checks and prompts (pre-flight git status, tickets, bug log, docs, tests, signoff).  
+  Acceptance: startup and exit flows enforce/verify the MO; non-compliance is surfaced with next steps.  
+  Notes: preflight checks and exit reminders enforce the MO.  
+  Deps: DOC3, CX34.
+- [ ] CX50: Interrupt/cancel running commands  
+  Provide a reliable way to stop long-running commands (Ctrl+C or UI action) with clear status updates.  
+  Acceptance: cancel is logged, user sees a confirmation, and the agent resumes cleanly.  
+  Deps: CX34.
+- [ ] CX51: Rerun last command/test shortcut  
+  Add a quick action to rerun the last command or last test with safety prompts.  
+  Acceptance: slash command or palette action reruns last command/test with approval/sandbox checks.  
+  Deps: CX42, CX43.
+- [ ] CX52: Output search/filter UX  
+  Add output search/filtering in TUI and palette (by command, rc, or text).  
+  Acceptance: a user can filter recent outputs and open the matching log quickly.  
+  Deps: CX25, CX34.
+
+P14 ? Martin-Librarian communication gaps
+- [ ] CL1: IPC protocol versioning + schema validation  
+  Add protocol version and strict schema validation on both ends.  
+  Acceptance: invalid or unknown versions are rejected with clear errors.  
+  Deps: L1.
+- [ ] CL2: Request/response correlation IDs  
+  Ensure every IPC request includes a stable `request_id` and responses echo it.  
+  Acceptance: logs and ledger entries show request_id end-to-end.  
+  Deps: CL1.
+- [ ] CL3: Message size limits + chunking  
+  Enforce max payload sizes and chunk large requests (e.g., ingest text).  
+  Acceptance: oversized payloads fail gracefully; chunking reassembles.  
+  Deps: CL1.
+- [ ] CL4: Local auth/allowlist for IPC  
+  Restrict IPC to local user context (token or filesystem-based secret).  
+  Acceptance: unauthorized clients are rejected; tests cover denial.  
+  Deps: CL1.
+- [ ] CL5: Heartbeat + health metrics  
+  Add heartbeat messages and expose last-seen timestamps.  
+  Acceptance: `/librarian status --verbose` shows last heartbeat age.  
+  Deps: CX19.
+- [ ] CL6: Retry/backoff + circuit breaker  
+  Standardize retry policy with circuit breaker on repeated failures.  
+  Acceptance: backoff logged; breaker prevents spam.  
+  Deps: L1.
+- [ ] CL7: IPC timeout/cancel support  
+  Allow Martin to cancel long-running Librarian tasks.  
+  Acceptance: cancel message stops work and logs outcome.  
+  Deps: CL2.
+- [ ] CL8: IPC error taxonomy  
+  Define structured error codes (timeout, sanitize_block, invalid_payload, etc.).  
+  Acceptance: errors include code + message; tests verify.  
+  Deps: CL1.
+- [ ] CL9: Sanitization assertions at boundaries  
+  Enforce redaction flags and verify sanitized prompts before egress.  
+  Acceptance: both client and server assert `sanitized=true` on cloud calls.  
+  Deps: CX33.
+- [ ] CL10: Ingest allowlist validation  
+  Validate ingest paths/text sources against allowlist rules.  
+  Acceptance: invalid paths are rejected and logged.  
+  Deps: C2.
+- [ ] CL11: Structured IPC logging  
+  Log IPC request/response summaries with redaction hashes.  
+  Acceptance: logs include request_id, sizes, and duration.  
+  Deps: CL2.
+- [ ] CL12: Inbox retention policy  
+  Add retention and truncation policy for Librarian inbox items.  
+  Acceptance: inbox capped and old entries archived.  
+  Deps: L5.
+
+P15 ? Project goal completion (local control + proprietary safety)
+- [ ] G1: Local-only default posture  
+  Default to local-only unless explicitly enabled by the user.  
+  Acceptance: config defaults to local-only; clear warning when enabling cloud.  
+  Deps: CX18.
+- [ ] G2: Cloud prompt preview + approve  
+  Show sanitized cloud prompt and require approval before sending.  
+  Acceptance: user can approve/deny per cloud call.  
+  Deps: CX14, CX33.
+- [ ] G3: Proprietary data scanner for ingest  
+  Scan for secrets/PII in ingested docs; warn or block.  
+  Acceptance: scanner logs and respects allow/deny rules.  
+  Deps: F2.
+- [ ] G4: Host bootstrap script  
+  One-command install to set up Martin on a new machine (venv + deps + config).  
+  Acceptance: bootstrap script works on Windows and documents steps.  
+  Deps: Q2.
+- [ ] G5: Background service/daemon  
+  Optional service mode to run Martin/Librarian persistently.  
+  Acceptance: service starts/stops and logs status.  
+  Deps: L1.
+- [ ] G6: Remote session handoff  
+  Export/import session context to move Martin between machines.  
+  Acceptance: `/export session` can be imported safely on another host.  
+  Deps: CX26.
+- [ ] G7: Trust policy config  
+  Central policy file for what can leave the machine and under what conditions.  
+  Acceptance: policy enforced by sanitizer + IPC + cloud bridge.  
+  Deps: CX33.
+- [ ] G8: Redaction audit report  
+  Generate a report of redaction decisions over time.  
+  Acceptance: CLI can export a redaction audit summary.  
+  Deps: CX12, CX20.
+- [ ] G9: Seed RAG starter pack for Martin  
+  Provide starter documents that teach how Martin operates, how to be an agent, and safe workflows.  
+  Acceptance: initial docs live in `data/raw/martin_starter/` and are referenced in setup docs; `ingest` can load them.  
+  Deps: C2, DOC3.
+
+P16 ? Operator guidance
+- [x] DOC3: Martin operator guide  
+  Provide a single authoritative Markdown guide for Martin's operating rules and workflows.  
+  Acceptance: `docs/martin_operator_guide.md` covers workflow, safety, cloud rules, and logging.  
+  Deps: AGENTS.md.

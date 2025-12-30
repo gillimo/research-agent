@@ -11,6 +11,8 @@ This file defines how to run Martin (the local coding/research agent) in this pr
 - Start interactive chat:
   - `martin`
   - `martin chat`
+- Start TUI shell:
+  - `martin tui`
 - One-shot ask:
   - `echo "question" | martin ask --stdin`
 - Status and utilities:
@@ -43,6 +45,7 @@ This file defines how to run Martin (the local coding/research agent) in this pr
 - `/context refresh` forces a new context pack and prints a brief summary
 - `/history pick <n>` selects a recent input for reuse
 - `/palette [query|pick <n>]` shows slash commands + recent inputs and can select an entry
+- `/files [query|pick <n>]` lists repo files and can select an entry
 - `/compress` summarize transcript
 - `/signoff` produce signoff summary
 - `/exit` or `/quit` leave chat

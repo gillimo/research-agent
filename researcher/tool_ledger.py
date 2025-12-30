@@ -138,7 +138,14 @@ def read_recent(limit: int = 10, ledger_path: Optional[Path] = None, filters: Op
 
 
 def export_json(path: Path, limit: int = 200, ledger_path: Optional[Path] = None) -> Path:
-    entries = read_recent(limit=limit, ledger_path=ledger_path)
+    from researcher.file_utils import preview_write
+    content = build_export_json(limit=limit, ledger_path=ledger_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if preview_write(path, content):
+        path.write_text(content, encoding="utf-8")
     return path
+
+
+def build_export_json(limit: int = 200, ledger_path: Optional[Path] = None) -> str:
+    entries = read_recent(limit=limit, ledger_path=ledger_path)
+    return json.dumps(entries, ensure_ascii=False, indent=2) + "\n"
