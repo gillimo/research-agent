@@ -37,6 +37,7 @@ Bug Log
 - 2025-12-30: Conditional inputs needed prompt-aware matching; checks now consider prompt event text for `input_when_text`.
 - 2025-12-30: Multiple conditional inputs with the same token could trigger at the first prompt; added baseline/consumed counters to pace repeated prompts.
 - 2025-12-30: Prompt token counts double-counted output and prompt events; prefer prompt events when available to avoid duplicate fires.
+- 2025-12-30: Prompt-aware matching skipped non-prompt tokens like "Done. OK"; fall back to output buffer when prompt texts don’t match.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

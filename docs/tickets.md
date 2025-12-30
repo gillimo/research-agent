@@ -764,6 +764,9 @@ P20 ? UAT harness stability
 - [x] UAT38: Avoid double-counting prompt tokens  
   Prefer prompt event text over output buffer when counting `input_when_text` occurrences.  
   Acceptance: duplicate conditional inputs stop firing on a single prompt.
+- [x] UAT39: Fallback for non-prompt tokens  
+  When prompt texts don’t include a token, count matches in output buffer.  
+  Acceptance: conditional inputs for "Done. OK" can trigger in mailbox mode.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

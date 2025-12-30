@@ -346,7 +346,9 @@ def main() -> int:
                 if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
                     prompt_texts.append(payload.get("text") or "")
         if prompt_texts:
-            return sum(text.count(token) for text in prompt_texts)
+            prompt_count = sum(text.count(token) for text in prompt_texts if token in text)
+            if prompt_count > 0:
+                return prompt_count
         with output_lock:
             blob = "".join(output_buffer)
         return blob.count(token)
