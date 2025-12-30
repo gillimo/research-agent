@@ -818,6 +818,9 @@ P20 ? UAT harness stability
 - [x] UAT56: Extend mailbox duration  
   Increase mailbox runtime to allow post-question approval prompts to be handled.  
   Acceptance: mailbox scenario no longer quits mid-approval.
+- [x] UAT57: Prompt-text waits  
+  Allow steps to wait for specific prompt text using prompt events.  
+  Acceptance: scenarios can wait on "You:" or approval prompts without stdout scraping.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

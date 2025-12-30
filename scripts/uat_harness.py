@@ -104,6 +104,34 @@ def _wait_for_event(
     return False, cursor
 
 
+def _wait_for_prompt_text(
+    events: List[Dict[str, Any]],
+    tokens: List[str],
+    timeout: float,
+    cursor: int = 0,
+    lock: Optional[threading.Lock] = None,
+    on_tick: Optional[Callable[[], None]] = None,
+) -> Tuple[bool, int]:
+    deadline = time.time() + timeout
+    normalized = [token for token in tokens if token]
+    while time.time() < deadline:
+        if on_tick:
+            on_tick()
+        if lock:
+            with lock:
+                snapshot = events[cursor:]
+        else:
+            snapshot = events[cursor:]
+        for idx, payload in enumerate(snapshot, start=cursor):
+            if payload.get("type") != "prompt":
+                continue
+            text = _strip_ansi(payload.get("text") or "")
+            if any(token in text for token in normalized):
+                return True, idx + 1
+        time.sleep(0.05)
+    return False, cursor
+
+
 def _strip_ansi(text: str) -> str:
     if not text:
         return ""
@@ -516,12 +544,14 @@ def main() -> int:
 
     cursor = 0
     event_cursor = 0
+    prompt_cursor = 0
     for step in steps:
         if not isinstance(step, dict):
             continue
         text = step.get("input")
         wait_for = step.get("wait_for")
         wait_for_event = step.get("wait_for_event")
+        wait_for_prompt = step.get("wait_for_prompt")
         input_when_text = step.get("input_when_text")
         input_when_event = step.get("input_when_event")
         input_when_prompt = step.get("input_when_prompt")
@@ -662,6 +692,22 @@ def main() -> int:
                 )
                 if not found:
                     print(f"[warn] Expected event not found: {event_types!r}", file=sys.stderr)
+        if wait_for_prompt:
+            if mailbox_mode:
+                continue
+            tokens = [wait_for_prompt] if isinstance(wait_for_prompt, str) else list(wait_for_prompt or [])
+            if tokens:
+                timeout = float(step.get("timeout", args.timeout))
+                found, prompt_cursor = _wait_for_prompt_text(
+                    event_buffer,
+                    tokens,
+                    timeout,
+                    prompt_cursor,
+                    event_lock,
+                    on_tick=_flush_pending,
+                )
+                if not found:
+                    print(f"[warn] Expected prompt not found: {tokens!r}", file=sys.stderr)
         if mailbox_mode:
             continue
         sleep_for = step.get("sleep", args.delay)

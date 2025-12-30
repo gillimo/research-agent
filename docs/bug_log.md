@@ -54,6 +54,7 @@ Bug Log
 - 2025-12-30: Mailbox questions could be consumed by auto-start approval prompts; gate questions on Done OK + You prompt.
 - 2025-12-30: Mailbox scenario queued too many follow-ups and exited with pending inputs; trim to a single follow-up question.
 - 2025-12-30: Mailbox duration ended before the post-question approval prompt; extend mailbox duration for the default scenario.
+- 2025-12-30: UAT harness could not wait for specific prompt text, forcing stdout text waits; add prompt-text waits from socket events.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
