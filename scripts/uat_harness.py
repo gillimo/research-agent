@@ -347,9 +347,20 @@ def main() -> int:
                 blob = "".join(output_buffer)
             if output_pos is not None:
                 blob = blob[output_pos:]
+            prompt_texts: List[str] = []
+            with event_lock:
+                events = event_buffer if event_pos is None else event_buffer[event_pos:]
+                for payload in events:
+                    if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
+                        prompt_texts.append(payload.get("text") or "")
             for token in tokens:
-                if token and token not in blob:
-                    return False
+                if not token:
+                    continue
+                if token in blob:
+                    continue
+                if any(token in text for text in prompt_texts):
+                    continue
+                return False
         if wait_event:
             tokens = [wait_event] if isinstance(wait_event, str) else list(wait_event)
             with event_lock:

@@ -755,6 +755,9 @@ P20 ? UAT harness stability
 - [x] UAT35: Defer conditional inputs in mailbox mode  
   Always queue conditional inputs in mailbox mode to avoid immediate sends.  
   Acceptance: mailbox mode no longer sends conditional inputs before prompts appear.
+- [x] UAT36: Prompt-aware conditional checks  
+  Treat matching prompt event text as satisfying `input_when_text`.  
+  Acceptance: conditional inputs fire when their prompt appears, not on stale output.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

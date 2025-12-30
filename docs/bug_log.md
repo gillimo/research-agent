@@ -34,6 +34,7 @@ Bug Log
 - 2025-12-30: Scenario mailbox_duration was ignored (CLI default always used); apply scenario override when flag not set.
 - 2025-12-30: Conditional inputs matched old output because checks used full buffer; track output/event cursors for deferred inputs.
 - 2025-12-30: Mailbox mode still sent conditional inputs early because immediate checks matched old output; always defer conditional inputs in mailbox mode.
+- 2025-12-30: Conditional inputs needed prompt-aware matching; checks now consider prompt event text for `input_when_text`.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
