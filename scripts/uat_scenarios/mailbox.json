@@ -54,6 +54,14 @@
     {
       "input": "what should we do next?",
       "input_timeout": 15
+    },
+    {
+      "wait_for": "Approve running",
+      "timeout": 30
+    },
+    {
+      "input": "no",
+      "input_timeout": 10
     }
   ]
 }

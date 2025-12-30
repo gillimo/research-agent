@@ -722,6 +722,9 @@ P20 ? UAT harness stability
 - [x] UAT24: Handle outside-workspace prompt in scenarios  
   Respond to the "Command touches outside workspace" confirmation before waiting for completion.  
   Acceptance: scenario does not hang at the outside-workspace prompt.
+- [x] UAT25: Handle follow-up approval prompt  
+  After the follow-up question, respond to the approval prompt before quitting.  
+  Acceptance: scenario does not leave the plan approval prompt pending.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
