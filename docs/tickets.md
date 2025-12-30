@@ -842,6 +842,9 @@ P20 ? UAT harness stability
 - [x] UAT64: Prompt-text multi-token coverage  
   Add a unit test to verify `_wait_for_prompt_text` matches any token in a list.  
   Acceptance: prompt waits succeed when any token matches.
+- [x] UX7: Codex parity behavior section  
+  Document Codex-style behavior expectations in `docs/expected_behavior.md`.  
+  Acceptance: expected behavior doc lists Codex parity behaviors and UX inventory references it.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
