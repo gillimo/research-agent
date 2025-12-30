@@ -153,11 +153,22 @@ def _render_worklog(entries: List[Dict[str, str]], selected: int) -> Panel:
     return Panel(table, title="Process", style=THEME["panel"])
 
 
-def _build_layout(header: Panel, left: Panel, right: Panel, footer: Panel) -> Layout:
+def _render_worklog_footer(entries: List[Dict[str, str]]) -> Panel:
+    table = Table(show_header=True, header_style=THEME["header"])
+    table.add_column("#", style="dim", width=4)
+    table.add_column("kind", style="dim", width=10)
+    table.add_column("text", style="white")
+    for idx, entry in enumerate(entries[:5], 1):
+        table.add_row(str(idx), entry.get("kind", ""), entry.get("text", ""))
+    return Panel(table, title="Heartbeat", style=THEME["panel"])
+
+
+def _build_layout(header: Panel, left: Panel, right: Panel, process: Panel, footer: Panel) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(header, name="header", size=3),
         Layout(name="body", ratio=1),
+        Layout(process, name="process", size=7),
         Layout(footer, name="footer", size=3),
     )
     layout["body"].split_row(
@@ -211,17 +222,9 @@ def _ensure_handle(console: Console) -> str:
 
 def _prompt_clock(console: Console, action: str) -> None:
     handle = _ensure_handle(console)
-    try:
-        note = console.input(f"{action} note (or .skip <reason>): ").strip()
-    except Exception:
-        note = ".skip interrupted"
-    if note.startswith(".skip"):
-        reason = note.replace(".skip", "", 1).strip() or "no reason"
-        append_logbook_entry(handle, action, "", skipped_reason=reason)
-        append_worklog("thinking", f"{action} skipped: {reason}")
-        return
-    append_logbook_entry(handle, action, note or "ok")
-    append_worklog("doing", f"{action} recorded")
+    note = f"auto: {action.lower()}"
+    append_logbook_entry(handle, action, note)
+    append_worklog("doing", f"{action} recorded (auto)")
 
 
 def _mo_preflight(console: Console) -> None:
@@ -267,10 +270,12 @@ def run_tui() -> None:
     cfg = load_config()
     model_info = str(cfg.get("local_model") or cfg.get("embedding_model") or "local")
     warn = "local-only" if cfg.get("local_only") else ""
-    chat_ui.render_status_banner(context, last_cmd, mode=banner_mode, model_info=model_info, warnings=warn)
+    current_host = st.get("current_host", "") if isinstance(st, dict) else ""
+    chat_ui.render_status_banner(context, last_cmd, mode=banner_mode, model_info=model_info, warnings=warn, current_host=current_host)
     last_heartbeat = time.monotonic()
+    heartbeat_panel = _render_worklog_footer(read_worklog(5))
 
-    with Live(_build_layout(header, _render_palette(palette_items, selections["palette"]), _render_context(context, tests_last), footer), console=console, refresh_per_second=4) as live:
+    with Live(_build_layout(header, _render_palette(palette_items, selections["palette"]), _render_context(context, tests_last), heartbeat_panel, footer), console=console, refresh_per_second=4) as live:
         while True:
             key = _get_key()
             if key == "q":
@@ -344,7 +349,8 @@ def run_tui() -> None:
                 out = outputs[selections["outputs"]] if outputs else None
                 right = _render_help() if help_mode else _render_output_detail(out)
 
+            heartbeat_panel = _render_worklog_footer(read_worklog(5))
             footer = _render_help()
-            live.update(_build_layout(header, left, right, footer))
+            live.update(_build_layout(header, left, right, heartbeat_panel, footer))
             time.sleep(0.05)
     _prompt_clock(console, "Clock-out")

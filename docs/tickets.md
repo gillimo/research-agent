@@ -842,6 +842,9 @@ P20 ? UAT harness stability
 - [x] UAT64: Prompt-text multi-token coverage  
   Add a unit test to verify `_wait_for_prompt_text` matches any token in a list.  
   Acceptance: prompt waits succeed when any token matches.
+- [x] UX8: Heartbeat panel placement  
+  Render a heartbeat/worklog summary below the main TUI panels.  
+  Acceptance: heartbeat entries appear beneath main content in TUI.
 - [x] UX7: Codex parity behavior section  
   Document Codex-style behavior expectations in `docs/expected_behavior.md`.  
   Acceptance: expected behavior doc lists Codex parity behaviors and UX inventory references it.
