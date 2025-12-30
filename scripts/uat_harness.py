@@ -406,6 +406,16 @@ def main() -> int:
                 item.get("baseline_event"),
             ):
                 _send(item["input"])
+                _append_log(
+                    event_log,
+                    {
+                        "ts": time.time(),
+                        "type": "pending_send",
+                        "input": item.get("input"),
+                        "input_when_text": item.get("input_when_text"),
+                        "input_when_event": item.get("input_when_event"),
+                    },
+                )
                 for token in item.get("baseline_text", {}):
                     consumed_text_counts[token] = consumed_text_counts.get(token, 0) + 1
                 for token in item.get("baseline_event", {}):
@@ -458,10 +468,18 @@ def main() -> int:
             if mailbox_mode and (input_when_text or input_when_event):
                 should_send = False
             if input_when_text:
-                if not _conditions_met(input_when_text, None):
+                baseline_text = _baseline_counts(
+                    [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or []),
+                    _count_text_matches,
+                )
+                if not _conditions_met(input_when_text, None, baseline_text, None):
                     should_send = False
             if should_send and input_when_event:
-                if not _conditions_met(None, input_when_event):
+                baseline_event = _baseline_counts(
+                    [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or []),
+                    _count_event_matches,
+                )
+                if not _conditions_met(None, input_when_event, None, baseline_event):
                     should_send = False
             if not should_send:
                 text_tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
@@ -476,6 +494,14 @@ def main() -> int:
                     }
                 )
                 continue
+            if input_when_text:
+                for token in [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or []):
+                    if token:
+                        consumed_text_counts[token] = consumed_text_counts.get(token, 0) + 1
+            if input_when_event:
+                for token in [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or []):
+                    if token:
+                        consumed_event_counts[token] = consumed_event_counts.get(token, 0) + 1
             if auto_wait and not wait_for and not mailbox_mode:
                 if use_socket:
                     found = True

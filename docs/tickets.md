@@ -770,6 +770,12 @@ P20 ? UAT harness stability
 - [x] UAT40: Report pending inputs in mailbox mode  
   Emit a `pending_inputs` entry in the event log before quitting.  
   Acceptance: mailbox runs show pending input conditions in `logs/uat_events.ndjson`.
+- [x] UAT41: Consume immediate conditional sends  
+  Increment prompt/event counters when conditional inputs send immediately.  
+  Acceptance: later conditional inputs do not fire on stale prompts.
+- [x] UAT42: Log pending send actions  
+  Emit a `pending_send` entry when deferred inputs are sent.  
+  Acceptance: event log shows which conditional inputs fired.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
