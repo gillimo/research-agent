@@ -10,7 +10,7 @@
   "event_log": "logs/uat_events.ndjson",
   "screenshot_dir": "logs/uat_snapshots",
   "snapshot_lines": 40,
-  "mailbox_duration": 20,
+  "mailbox_duration": 40,
   "steps": [
     {
       "wait_for_event": "loop_ready",
@@ -56,7 +56,8 @@
     },
     {
       "input": "what should we do next?",
-      "input_timeout": 15
+      "input_timeout": 15,
+      "input_when_text": "Done. OK"
     },
     {
       "input": "no",

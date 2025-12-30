@@ -743,6 +743,9 @@ P20 ? UAT harness stability
 - [x] UAT31: Extend mailbox duration  
   Increase mailbox scenario duration to allow prompts and deferred inputs to fire.  
   Acceptance: mailbox runs have enough time for approvals to appear.
+- [x] UAT32: Gate mailbox follow-up on completion  
+  Send the follow-up question only after "Done. OK" appears, and extend mailbox duration.  
+  Acceptance: mailbox follow-up no longer lands mid-plan.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
