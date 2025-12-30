@@ -4,9 +4,8 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) UAT8: Add parity check for test socket mode (no behavior changes)
-2) G4V: Verify host bootstrap script on clean machine
-3) G5V: Verify service script on clean machine
+1) G4V: Verify host bootstrap script on clean machine
+2) G5V: Verify service script on clean machine
 
 
 P0 – Safety/Secrets
@@ -672,7 +671,7 @@ P20 ? UAT harness stability
 - [x] UAT6: Fix socket input consumption in test bridge  
   Ensure `input` messages sent over the test socket are queued and consumed by CLI prompts.  
   Acceptance: harness receives input_ack and CLI progresses past prompts.
-- [ ] UAT8: Test socket mode parity check  
+- [x] UAT8: Test socket mode parity check  
   Add a lightweight test or harness check that context auto-surface runs in test socket mode.  
   Acceptance: test socket runs show context summary without special-casing test mode.
 - [x] UAT9: Event-based waits for socket harness  
