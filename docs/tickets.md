@@ -698,6 +698,9 @@ P20 ? UAT harness stability
 - [x] UAT16: Clear socket read timeout  
   Disable the 1s socket timeout after connect to avoid dropping event streams.  
   Acceptance: socket output events continue beyond the initial ping/pong.
+- [x] UAT17: Slow-start socket timeouts  
+  Increase socket scenario `wait_for_event` timeouts to reduce flakiness.  
+  Acceptance: loop_ready/prompt waits no longer time out on slow starts.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

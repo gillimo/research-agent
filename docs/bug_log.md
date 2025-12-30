@@ -14,6 +14,7 @@ Bug Log
 - 2025-12-30: Socket UAT still misses `loop_ready` and `martin: Context:` in some runs; harness timing shows input timeouts before readiness events.
 - 2025-12-30: Socket harness could miss output events; added stdout fallback capture and replay of `loop_ready`/`input_wait` on connect.
 - 2025-12-30: Socket reader timed out after connect (1s timeout), dropping output events; set socket to blocking mode after connect.
+- 2025-12-30: Socket UAT loop_ready/prompt waits were too short for slow startups; increased scenario timeouts to 30s.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

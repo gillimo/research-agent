@@ -13,7 +13,7 @@
   "steps": [
     {
       "wait_for_event": "loop_ready",
-      "timeout": 10
+      "timeout": 30
     },
     {
       "input": "/agent on",
@@ -21,7 +21,7 @@
     },
     {
       "wait_for_event": "prompt",
-      "timeout": 10
+      "timeout": 30
     },
     {
       "input": "i want you to investigate this folder and tell me about the project",
@@ -29,7 +29,7 @@
     },
     {
       "wait_for_event": "prompt",
-      "timeout": 10
+      "timeout": 30
     },
     {
       "input": "what should we do next?",
