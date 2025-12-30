@@ -17,6 +17,7 @@ LIBRARIAN_ADDR = (LIBRARIAN_HOST, LIBRARIAN_PORT)
 LIBRARIAN_TIMEOUT_S = int(os.getenv("LIBRARIAN_TIMEOUT_S", 10))
 LIBRARIAN_RETRIES = int(os.getenv("LIBRARIAN_RETRIES", 3))
 LIBRARIAN_RETRY_DELAY_S = float(os.getenv("LIBRARIAN_RETRY_DELAY_S", 0.5))
+PROTOCOL_VERSION = "1"
 
 class LibrarianClient:
     """
@@ -53,6 +54,7 @@ class LibrarianClient:
             return {"status": "error", "message": "Failed to connect to Librarian."}
         
         try:
+            message.setdefault("protocol_version", PROTOCOL_VERSION)
             # Encode message and prefix with its length (4-byte integer)
             msg_json = json.dumps(message).encode('utf-8')
             msg_len = struct.pack('!I', len(msg_json))
@@ -73,7 +75,10 @@ class LibrarianClient:
                     raise ConnectionError("Librarian closed the connection during response.")
                 response_bytes += chunk
 
-            return json.loads(response_bytes.decode('utf-8'))
+            response = json.loads(response_bytes.decode('utf-8'))
+            if response.get("protocol_version") != PROTOCOL_VERSION:
+                return {"status": "error", "message": "Protocol version mismatch."}
+            return response
 
         except (socket.timeout, ConnectionError) as e:
             print(f"LibrarianClient: Communication error: {e}")

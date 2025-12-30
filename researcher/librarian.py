@@ -16,6 +16,7 @@ from researcher.config_loader import load_config
 from researcher.index_utils import load_index_from_config
 
 LIBRARIAN_HEARTBEAT_INTERVAL_S = int(os.environ.get("LIBRARIAN_HEARTBEAT_INTERVAL_S", 10))
+PROTOCOL_VERSION = "1"
 
 
 def _note_id(text: str) -> str:
@@ -93,6 +94,7 @@ class Librarian:
             return
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                notification.setdefault("protocol_version", PROTOCOL_VERSION)
                 sock.connect(self.researcher_addr)
                 msg_json = json.dumps(notification).encode('utf-8')
                 msg_len = struct.pack('!I', len(msg_json))
@@ -112,6 +114,8 @@ class Librarian:
     def _handle_ipc_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handles incoming IPC messages from the Researcher."""
         self._log("Received IPC message", message_type=message.get("type"))
+        if message.get("protocol_version") != PROTOCOL_VERSION:
+            return {"status": "error", "message": "Protocol version mismatch.", "protocol_version": PROTOCOL_VERSION}
         response: Dict[str, Any] = {"status": "error", "message": "Unknown message type"}
         msg_type = message.get("type")
 
@@ -225,6 +229,7 @@ class Librarian:
             response = {"status": "success", "result": ingest_result}
             self._send_notification_to_researcher({"type": "notification", "event": "ingestion_complete", "details": ingest_result})
 
+        response["protocol_version"] = PROTOCOL_VERSION
         self._log("Responding to IPC message", message_type=msg_type, response_status=response.get("status"))
         return response
         

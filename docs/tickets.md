@@ -4,11 +4,11 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CX58: Keybindings/help discoverability
-2) CX59: Recovery and retry UX
-3) CX60: First-run onboarding wizard
-4) G9: Seed RAG starter pack for Martin
-5) CL1: IPC protocol versioning + schema validation
+1) CL2: Request/response correlation IDs
+2) CL3: Message size limits + chunking
+3) CL4: Local auth/allowlist for IPC
+4) CL5: Heartbeat + health metrics
+5) G10: Remote pairing + device registry
 
 
 P0 – Safety/Secrets
@@ -361,23 +361,27 @@ Notes: status banner includes model info and warnings.
   Acceptance: explicit confirmation for commands outside workspace with log entry.  
 Notes: outside-workspace commands require confirmation and are logged.  
   Deps: CX13.
-- [ ] CX58: Keybindings/help discoverability  
+- [x] CX58: Keybindings/help discoverability  
   Add a `/keys` view or TUI help overlay showing active bindings.  
   Acceptance: keybinding help is available in chat and TUI.  
+Notes: /keys command documents chat/TUI keybindings.  
   Deps: CX34.
-- [ ] CX59: Recovery and retry UX  
+- [x] CX59: Recovery and retry UX  
   Offer a resume/redo prompt after crashes or failed commands.  
   Acceptance: last failed command can be retried safely with approval.  
+Notes: last failed command prompts /retry and is tracked in state.  
   Deps: CX11, CX12.
-- [ ] CX60: First-run onboarding wizard  
+- [x] CX60: First-run onboarding wizard  
   Add a guided setup flow (local-only toggle, handle, tests, log paths).  
   Acceptance: first run steps are shown once and can be re-run via command.  
+Notes: onboarding wizard runs on first launch and via /onboarding.  
   Deps: DOC3, CX49.
 
 P14 ? Martin-Librarian communication gaps
-- [ ] CL1: IPC protocol versioning + schema validation  
+- [x] CL1: IPC protocol versioning + schema validation  
   Add protocol version and strict schema validation on both ends.  
   Acceptance: invalid or unknown versions are rejected with clear errors.  
+Notes: protocol_version enforced on Librarian IPC requests/responses.  
   Deps: L1.
 - [ ] CL2: Request/response correlation IDs  
   Ensure every IPC request includes a stable `request_id` and responses echo it.  
@@ -471,9 +475,10 @@ P15 ? Project goal completion (local control + proprietary safety)
   Generate a report of redaction decisions over time.  
   Acceptance: CLI can export a redaction audit summary.  
   Deps: CX12, CX20.
-- [ ] G9: Seed RAG starter pack for Martin  
+- [x] G9: Seed RAG starter pack for Martin  
   Provide starter documents that teach how Martin operates, how to be an agent, and safe workflows.  
-  Acceptance: initial docs live in `data/raw/martin_starter/` and are referenced in setup docs; `ingest` can load them.  
+  Acceptance: initial docs live in `docs/starter_rag` and are referenced in setup docs; `ingest` can load them.  
+  Notes: starter RAG docs added under `docs/starter_rag`.  
   Deps: C2, DOC3.
 
 - [ ] G10: Remote pairing + device registry  

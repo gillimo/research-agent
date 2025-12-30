@@ -553,6 +553,25 @@ def cmd_chat(cfg, args) -> int:
                 print(json.dumps(delta, ensure_ascii=False, indent=2))
         except Exception:
             pass
+    def _run_onboarding() -> None:
+        st = load_state()
+        if st.get("onboarding_complete"):
+            print("martin: Onboarding already completed. Use /onboarding to re-run.")
+        print("\033[96mmartin: Onboarding checklist\033[0m")
+        print("- Verify local-only mode (`/status` shows local_only true if desired).")
+        print("- Set your logbook handle (first clock-in prompt).")
+        print("- Run tests: `/tests` then `/tests run <n>`.")
+        print("- Review tickets in docs/tickets.md.")
+        print("- Install launcher if desired (scripts/install_martin.ps1).")
+        try:
+            confirm = input("Mark onboarding complete? (yes/no) ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            confirm = "no"
+        if confirm == "yes":
+            st["onboarding_complete"] = True
+            st["onboarding_ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            save_state(st)
+            print("martin: Onboarding marked complete.")
     def _mo_preflight_check() -> None:
         root = Path.cwd()
         checks = []
@@ -729,6 +748,8 @@ def cmd_chat(cfg, args) -> int:
             print(_format_output_for_display(stdout))
         if stderr:
             print(_format_output_for_display(stderr), file=sys.stderr)
+        if rc and rc != 0:
+            _record_failed_command(cmd, rc, stderr or "failed")
         if not _privacy_enabled():
             try:
                 append_tool_entry({
@@ -761,6 +782,36 @@ def cmd_chat(cfg, args) -> int:
             return bool(st.get("session_privacy") == "no-log")
         except Exception:
             return False
+    def _record_failed_command(cmd: str, rc: int, reason: str) -> None:
+        if _privacy_enabled():
+            return
+        try:
+            st = load_state()
+            st["last_failed_command"] = {
+                "cmd": cmd,
+                "rc": rc,
+                "reason": reason,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "acked": False,
+            }
+            save_state(st)
+        except Exception:
+            pass
+
+    def _maybe_prompt_retry() -> None:
+        if _privacy_enabled():
+            return
+        try:
+            st = load_state()
+            last_fail = st.get("last_failed_command", {})
+            if last_fail and not last_fail.get("acked"):
+                cmd = last_fail.get("cmd", "")
+                rc = last_fail.get("rc", "")
+                print(f"\033[93mmartin: Last command failed (rc={rc}). Use /retry to rerun.\033[0m")
+                if cmd:
+                    print(f"martin: Last failed command: {cmd}")
+        except Exception:
+            pass
     # Start the socket server
     socket_server_cfg = cfg.get("socket_server", {})
     server = SocketServer(
@@ -782,6 +833,13 @@ def cmd_chat(cfg, args) -> int:
         _mo_preflight_check()
         _prompt_clock("Clock-in")
         _auto_context_surface("session start")
+        _maybe_prompt_retry()
+        try:
+            st = load_state()
+            if not st.get("onboarding_complete"):
+                _run_onboarding()
+        except Exception:
+            pass
         logger = _get_cli_logger(cfg)
         logger.info("chat_start")
         last_user_request = ""
@@ -945,7 +1003,7 @@ def cmd_chat(cfg, args) -> int:
                     should_exit = True
                     return True
                 if name == "help":
-                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /privacy on|off|status, /context [refresh], /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
+                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /privacy on|off|status, /keys, /retry, /onboarding, /context [refresh], /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
                     return True
                 if name == "clear":
                     transcript = []
@@ -997,6 +1055,36 @@ def cmd_chat(cfg, args) -> int:
                         print("martin: privacy mode disabled.")
                         return True
                     print("martin: Use /privacy on|off|status.")
+                    return True
+                if name == "keys":
+                    print("martin: Keybindings")
+                    print("TUI: q quit, p palette, t tasks, o outputs, m process, c context, r refresh, f filter outputs, j/k or arrows move, a add task, x done task, ? help.")
+                    print("Chat: use /help for slash commands.")
+                    return True
+                if name == "retry":
+                    st = load_state()
+                    last_fail = st.get("last_failed_command", {}) if isinstance(st, dict) else {}
+                    cmd = last_fail.get("cmd")
+                    if not cmd:
+                        print("martin: No failed command recorded.")
+                        return True
+                    ok, stdout, stderr, rc, output_path, duration = _execute_command_with_policy(cmd, label="retry command")
+                    try:
+                        st = load_state()
+                        st["last_failed_command"]["acked"] = True
+                        st["last_command_summary"] = {
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "cmd": cmd,
+                            "rc": rc,
+                            "ok": ok,
+                            "summary": chat_ui.shorten_output(stdout or stderr),
+                        }
+                        save_state(st)
+                    except Exception:
+                        pass
+                    return True
+                if name == "onboarding":
+                    _run_onboarding()
                     return True
                 if name == "signoff":
                     if transcript:
@@ -2052,6 +2140,8 @@ def cmd_chat(cfg, args) -> int:
                     step["rc"] = rc
                     step["stdout"] = stdout_text or ""
                     step["stderr"] = stderr_text or ""
+                    if rc and rc != 0:
+                        _record_failed_command(step["cmd"], rc, stderr_text or output or "failed")
                 step["ended_at"] = step["ended_at"] or time.time()
                 step["duration_s"] = step["duration_s"] or round(step["ended_at"] - step["started_at"], 3)
                 step["output"] = output or ""

@@ -18,7 +18,7 @@ Recommended flow
 5) Nudge/oversight: `python -m researcher nudge [--idle-seconds 300]`  
    Emits a nudge if logs show idleness beyond the threshold.
 6) Interactive chat: `python -m researcher chat`  
-   Slash commands include `/history`, `/palette [pick <n>]`, `/files [pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/privacy on|off|status`, `/rerun [command|test]`, `/outputs search <text>`, and `/context refresh`.  
+   Slash commands include `/history`, `/palette [pick <n>]`, `/files [pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/privacy on|off|status`, `/keys`, `/retry`, `/onboarding`, `/rerun [command|test]`, `/outputs search <text>`, and `/context refresh`.  
    A workspace status banner summarizes git status and last command result.
 7) TUI shell: `python -m researcher tui`  
    Keyboard-driven panels for palette, tasks, context, outputs, and process worklog (use `j/k` or arrows to navigate, `f` to filter outputs).
@@ -33,6 +33,7 @@ UX cues
 - `/tests` shows the last-run status and supports `/tests run <n>` to execute a suggested command.
 - Status banner includes model/provider info and local-only warnings.
 - Outside-workspace commands prompt for confirmation before running.
+- Privacy mode (`/privacy on`) disables transcript and ledger persistence for the session.
 
 Optional cloud bridge (until integrated into `ask`)
 - `echo "prompt" | python scripts/researcher_bridge.py --stdin --cloud-mode always --cloud-cmd "$env:CLOUD_CMD"`

@@ -3,6 +3,8 @@ import threading
 import json
 from typing import Dict, Any, Callable, Optional
 
+PROTOCOL_VERSION = "1"
+
 class SocketServer:
     """
     A simple socket server to listen for messages from the Librarian,
@@ -36,15 +38,21 @@ class SocketServer:
                 try:
                     message: Dict[str, Any] = json.loads(msg_bytes.decode("utf-8"))
                     print(f"[SocketServer] Received message: {message}")
+                    if message.get("protocol_version") not in (None, PROTOCOL_VERSION):
+                        response = {"status": "error", "message": "Protocol version mismatch", "protocol_version": PROTOCOL_VERSION}
+                        resp_json = json.dumps(response).encode("utf-8")
+                        resp_len = len(resp_json).to_bytes(4, byteorder="big")
+                        conn.sendall(resp_len + resp_json)
+                        continue
                     if self.handler:
                         self.handler(message)
-                    response = {"status": "ok", "message": "Message received"}
+                    response = {"status": "ok", "message": "Message received", "protocol_version": PROTOCOL_VERSION}
                 except json.JSONDecodeError:
                     print(f"[SocketServer] Received non-JSON data: {msg_bytes.decode('utf-8')}")
-                    response = {"status": "error", "message": "Invalid JSON format"}
+                    response = {"status": "error", "message": "Invalid JSON format", "protocol_version": PROTOCOL_VERSION}
                 except Exception as e:
                     print(f"[SocketServer] Error handling message: {e}")
-                    response = {"status": "error", "message": f"Handler error: {e}"}
+                    response = {"status": "error", "message": f"Handler error: {e}", "protocol_version": PROTOCOL_VERSION}
 
                 resp_json = json.dumps(response).encode("utf-8")
                 resp_len = len(resp_json).to_bytes(4, byteorder="big")

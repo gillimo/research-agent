@@ -7,7 +7,7 @@ from researcher.resource_registry import list_resources
 
 def get_slash_commands() -> List[str]:
     return [
-        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/privacy", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks", "/tests", "/rerun",
+        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/privacy", "/keys", "/retry", "/onboarding", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks", "/tests", "/rerun",
         "/abilities", "/resources", "/resource", "/rag",
         "/agent", "/cloud", "/ask", "/ingest", "/compress", "/signoff", "/exit", "/catalog", "/review",
     ]
@@ -26,6 +26,9 @@ def get_command_descriptions() -> Dict[str, str]:
         "/worklog": "show recent worklog",
         "/clock": "clock in/out",
         "/privacy": "toggle session privacy",
+        "/keys": "show keybindings",
+        "/retry": "retry last failed command",
+        "/onboarding": "run onboarding wizard",
         "/context": "show context pack",
         "/plan": "show last plan",
         "/outputs": "list saved outputs",
