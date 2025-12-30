@@ -19,3 +19,14 @@ def test_wait_for_prompt_text_matches_prompt_event() -> None:
     events = [{"type": "prompt", "text": "\x1b[93mApprove running\x1b[0m "}]
     found, _ = _wait_for_prompt_text(events, ["Approve running"], timeout=0.2)
     assert found
+
+
+def test_wait_for_prompt_text_advances_cursor() -> None:
+    events = [
+        {"type": "prompt", "text": "You: "},
+        {"type": "prompt", "text": "Approve running these commands? "},
+    ]
+    found, cursor = _wait_for_prompt_text(events, ["You:"], timeout=0.2)
+    assert found
+    found, _ = _wait_for_prompt_text(events, ["Approve running"], timeout=0.2, cursor=cursor)
+    assert found

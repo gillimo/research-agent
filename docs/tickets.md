@@ -830,6 +830,9 @@ P20 ? UAT harness stability
 - [x] UAT60: Unit test prompt-text waits  
   Add coverage for `_wait_for_prompt_text` in the harness tests.  
   Acceptance: test passes with ANSI-colored prompt events.
+- [x] UAT61: Prompt-text cursor coverage  
+  Add a unit test to verify `_wait_for_prompt_text` advances the cursor between prompts.  
+  Acceptance: sequential prompt waits succeed using the updated cursor.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
