@@ -39,3 +39,15 @@ def test_wait_for_prompt_text_ignores_non_prompt_events() -> None:
     ]
     found, _ = _wait_for_prompt_text(events, ["Approve running"], timeout=0.2)
     assert found
+
+
+def test_wait_for_prompt_text_times_out() -> None:
+    events = [{"type": "prompt", "text": "You: "}]
+    found, _ = _wait_for_prompt_text(events, ["Approve running"], timeout=0.1)
+    assert not found
+
+
+def test_wait_for_prompt_text_matches_any_token() -> None:
+    events = [{"type": "prompt", "text": "Approve running these commands? "}]
+    found, _ = _wait_for_prompt_text(events, ["You:", "Approve running"], timeout=0.2)
+    assert found

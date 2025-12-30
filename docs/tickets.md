@@ -836,6 +836,12 @@ P20 ? UAT harness stability
 - [x] UAT62: Prompt-only event filtering test  
   Add a unit test to ensure `_wait_for_prompt_text` ignores non-prompt events.  
   Acceptance: prompt waits do not match stdout events.
+- [x] UAT63: Prompt-text timeout coverage  
+  Add a unit test that exercises the timeout path when a prompt token is missing.  
+  Acceptance: prompt waits return false on timeout.
+- [x] UAT64: Prompt-text multi-token coverage  
+  Add a unit test to verify `_wait_for_prompt_text` matches any token in a list.  
+  Acceptance: prompt waits succeed when any token matches.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

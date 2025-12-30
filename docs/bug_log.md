@@ -60,6 +60,8 @@ Bug Log
 - 2025-12-30: Prompt-text wait helper lacked unit coverage; add a focused test for prompt events.
 - 2025-12-30: Prompt-text wait cursor progression lacked coverage; add a test to ensure cursor advances between prompts.
 - 2025-12-30: Prompt-text wait did not have coverage for non-prompt events; add a test to ensure only prompt events are considered.
+- 2025-12-30: Prompt-text wait timeout path lacked coverage; add a test that validates the false return on missing prompt text.
+- 2025-12-30: Prompt-text wait multi-token behavior lacked coverage; add a test to assert any-token matching.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
