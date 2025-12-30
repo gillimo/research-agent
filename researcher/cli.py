@@ -514,6 +514,43 @@ def cmd_chat(cfg, args) -> int:
             save_state(st)
         except Exception:
             pass
+
+    def _context_delta(prev: Dict[str, Any], curr: Dict[str, Any]) -> Dict[str, Any]:
+        delta: Dict[str, Any] = {}
+        try:
+            prev_recent = set(prev.get("recent_files", []) or [])
+            curr_recent = set(curr.get("recent_files", []) or [])
+            if curr_recent - prev_recent:
+                delta["new_recent_files"] = sorted(list(curr_recent - prev_recent))[:20]
+        except Exception:
+            pass
+        try:
+            prev_git = (prev.get("git_status") or "").splitlines()
+            curr_git = (curr.get("git_status") or "").splitlines()
+            if prev_git or curr_git:
+                delta["git_status"] = (curr_git[:1][0] if curr_git else "")
+        except Exception:
+            pass
+        return delta
+
+    def _auto_context_surface(reason: str) -> None:
+        nonlocal context_cache
+        try:
+            st = load_state()
+            prev = st.get("context_cache", {}) if isinstance(st, dict) else {}
+            from researcher.context_harvest import gather_context
+            context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+            st = load_state()
+            st["context_cache"] = context_cache
+            save_state(st)
+            delta = _context_delta(prev if isinstance(prev, dict) else {}, context_cache)
+            print(f"\033[96mmartin: Context update ({reason})\033[0m")
+            chat_ui.print_context_summary(context_cache)
+            if delta:
+                print("martin: Context changes:")
+                print(json.dumps(delta, ensure_ascii=False, indent=2))
+        except Exception:
+            pass
     def _mo_preflight_check() -> None:
         root = Path.cwd()
         checks = []
@@ -578,8 +615,90 @@ def cmd_chat(cfg, args) -> int:
     def _run_cmd_with_worklog(cmd: str) -> Tuple[bool, str, str, int]:
         append_worklog("doing", f"run: {cmd}")
         ok, stdout, stderr, rc = run_command_smart_capture(cmd)
-        append_worklog("done", f"rc={rc} {cmd}")
+        if rc == 130:
+            append_worklog("cancel", f"rc=130 {cmd}")
+        else:
+            append_worklog("done", f"rc={rc} {cmd}")
         return ok, stdout, stderr, rc
+
+    def _format_review_response(text: str) -> str:
+        if not text:
+            return "Findings:\n- None.\n\nQuestions:\n- None.\n\nTests:\n- Not run."
+        lower = text.lower()
+        has_findings = "findings" in lower
+        has_questions = "questions" in lower
+        has_tests = "tests" in lower or "testing" in lower
+        if has_findings and has_questions and has_tests:
+            return text
+        body = text.strip()
+        return (
+            "Findings:\n"
+            "- " + (body.replace("\n", "\n- ") if body else "None.") + "\n\n"
+            "Questions:\n"
+            "- None.\n\n"
+            "Tests:\n"
+            "- Not run."
+        )
+
+    def _execute_command_with_policy(cmd: str, label: str = "command") -> Tuple[bool, str, str, int, str, float]:
+        exec_cfg = cfg.get("execution", {}) or {}
+        approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
+        sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
+        command_allowlist = exec_cfg.get("command_allowlist") or []
+        command_denylist = exec_cfg.get("command_denylist") or []
+        risk = classify_command_risk(cmd, command_allowlist, command_denylist)
+        if risk["level"] == "blocked":
+            print(f"\033[93mmartin: {label} blocked by policy.\033[0m")
+            return False, "", "blocked by policy", 2, "", 0.0
+        allowed, reason = enforce_sandbox(cmd, sandbox_mode, str(Path.cwd()))
+        if not allowed:
+            if approval_policy != "never":
+                try:
+                    resp = input(f"\033[93mmartin: Sandbox blocked this {label} ({reason}). Override once? (yes/no)\033[0m ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    resp = "no"
+                allowed = resp == "yes"
+            if not allowed:
+                print(f"\033[93mmartin: {label} blocked by sandbox.\033[0m")
+                return False, "", reason, 2, "", 0.0
+        if approval_policy == "on-request":
+            try:
+                confirm = input(f"\033[93mApprove running this {label}? (yes/no)\033[0m ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                confirm = "no"
+            if confirm != "yes":
+                print("\033[92mmartin: Aborting per approval policy.\033[0m")
+                return False, "", "aborted", 1, "", 0.0
+        t0 = time.perf_counter()
+        ok, stdout, stderr, rc = _run_cmd_with_worklog(cmd)
+        duration = time.perf_counter() - t0
+        if rc == 130:
+            print("\033[93mmartin: Command cancelled.\033[0m")
+        output_path = ""
+        if stdout and len(stdout) > 4000:
+            output_path = _store_long_output(stdout, label)
+        if stdout:
+            print(_format_output_for_display(stdout))
+        if stderr:
+            print(_format_output_for_display(stderr), file=sys.stderr)
+        try:
+            append_tool_entry({
+                "command": cmd,
+                "cwd": str(Path.cwd()),
+                "rc": rc,
+                "ok": ok,
+                "duration_s": duration,
+                "stdout": stdout,
+                "stderr": stderr,
+                "output_path": output_path,
+                "risk": risk.get("level"),
+                "risk_reasons": risk.get("reasons"),
+                "sandbox_mode": sandbox_mode,
+                "approval_policy": approval_policy,
+            })
+        except Exception:
+            pass
+        return ok, stdout, stderr, rc, output_path, duration
 
     def _mo_exit_check() -> None:
         st = load_state()
@@ -595,7 +714,6 @@ def cmd_chat(cfg, args) -> int:
         handler=_handle_librarian_notification
     )
     server.start()
-
     try:
         st = load_state()
         sess = SessionCtx(st)
@@ -608,6 +726,7 @@ def cmd_chat(cfg, args) -> int:
             pass
         _mo_preflight_check()
         _prompt_clock("Clock-in")
+        _auto_context_surface("session start")
         logger = _get_cli_logger(cfg)
         logger.info("chat_start")
         last_user_request = ""
@@ -764,7 +883,7 @@ def cmd_chat(cfg, args) -> int:
                     should_exit = True
                     return True
                 if name == "help":
-                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /context [refresh], /plan, /outputs [ledger|export <path>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
+                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /context [refresh], /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
                     return True
                 if name == "clear":
                     transcript = []
@@ -911,6 +1030,25 @@ def cmd_chat(cfg, args) -> int:
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
                     return True
                 if name == "outputs":
+                    if args and args[0] == "search":
+                        query = " ".join(args[1:]).strip()
+                        if not query:
+                            print("martin: Use /outputs search <text>.")
+                            return True
+                        rows = read_recent(limit=20, filters={"text": query})
+                        if not rows:
+                            print("martin: No matching outputs.")
+                            return True
+                        for row in rows:
+                            entry = row.get("entry", {})
+                            cmd = entry.get("command", "")
+                            ts = entry.get("ts", "")
+                            rc = entry.get("rc", "")
+                            out_path = entry.get("output_path", "")
+                            print(f"{ts} rc={rc} cmd={cmd}")
+                            if out_path:
+                                print(f"  output: {out_path}")
+                        return True
                     if args and args[0] == "ledger":
                         filters: Dict[str, Any] = {}
                         for tok in args[1:]:
@@ -1031,44 +1169,7 @@ def cmd_chat(cfg, args) -> int:
                                 print("martin: Use /tests run <n> from the suggested list.")
                                 return True
                             cmd = cmds[idx - 1]
-                            exec_cfg = cfg.get("execution", {}) or {}
-                            approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
-                            sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
-                            command_allowlist = exec_cfg.get("command_allowlist") or []
-                            command_denylist = exec_cfg.get("command_denylist") or []
-                            risk = classify_command_risk(cmd, command_allowlist, command_denylist)
-                            if risk["level"] == "blocked":
-                                print("\033[93mmartin: Test command blocked by policy.\033[0m")
-                                return True
-                            allowed, reason = enforce_sandbox(cmd, sandbox_mode, str(Path.cwd()))
-                            if not allowed:
-                                if approval_policy != "never":
-                                    try:
-                                        resp = input(f"\033[93mmartin: Sandbox blocked this test command ({reason}). Override once? (yes/no)\033[0m ").strip().lower()
-                                    except (EOFError, KeyboardInterrupt):
-                                        resp = "no"
-                                    allowed = resp == "yes"
-                                if not allowed:
-                                    print("\033[93mmartin: Test command blocked by sandbox.\033[0m")
-                                    return True
-                            if approval_policy == "on-request":
-                                try:
-                                    confirm = input("\033[93mApprove running this test command? (yes/no)\033[0m ").strip().lower()
-                                except (EOFError, KeyboardInterrupt):
-                                    confirm = "no"
-                                if confirm != "yes":
-                                    print("\033[92mmartin: Aborting per approval policy.\033[0m")
-                                    return True
-                            t0 = time.perf_counter()
-                            ok, stdout, stderr, rc = _run_cmd_with_worklog(cmd)
-                            duration = time.perf_counter() - t0
-                            output_path = ""
-                            if stdout and len(stdout) > 4000:
-                                output_path = _store_long_output(stdout, "tests")
-                            if stdout:
-                                print(_format_output_for_display(stdout))
-                            if stderr:
-                                print(_format_output_for_display(stderr), file=sys.stderr)
+                            ok, stdout, stderr, rc, output_path, duration = _execute_command_with_policy(cmd, label="test")
                             try:
                                 st = load_state()
                                 st["tests_last"] = {
@@ -1082,23 +1183,6 @@ def cmd_chat(cfg, args) -> int:
                                 log_event(st, "tests_run", cmd=cmd, ok=ok, rc=rc, duration_s=duration)
                             except Exception:
                                 pass
-                            try:
-                                append_tool_entry({
-                                    "command": cmd,
-                                    "cwd": str(Path.cwd()),
-                                    "rc": rc,
-                                    "ok": ok,
-                                    "duration_s": duration,
-                                    "stdout": stdout,
-                                    "stderr": stderr,
-                                    "output_path": output_path,
-                                    "risk": risk.get("level"),
-                                    "risk_reasons": risk.get("reasons"),
-                                    "sandbox_mode": sandbox_mode,
-                                    "approval_policy": approval_policy,
-                                })
-                            except Exception:
-                                pass
                             return True
                         if not cmds:
                             print("martin: No test helpers detected in this folder.")
@@ -1108,6 +1192,49 @@ def cmd_chat(cfg, args) -> int:
                             print(f"{i}. {c}")
                     except Exception:
                         print("martin: Unable to suggest tests here.")
+                    return True
+                if name == "rerun":
+                    sub = args[0].lower() if args else "command"
+                    st = load_state()
+                    if sub in ("command", "last"):
+                        cmd = (st.get("last_command_summary", {}) or {}).get("cmd")
+                        if not cmd:
+                            print("martin: No last command recorded.")
+                            return True
+                        ok, stdout, stderr, rc, output_path, duration = _execute_command_with_policy(cmd, label="rerun command")
+                        try:
+                            st = load_state()
+                            st["last_command_summary"] = {
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "cmd": cmd,
+                                "rc": rc,
+                                "ok": ok,
+                                "summary": chat_ui.shorten_output(stdout or stderr),
+                            }
+                            save_state(st)
+                        except Exception:
+                            pass
+                        return True
+                    if sub == "test":
+                        cmd = (st.get("tests_last", {}) or {}).get("cmd")
+                        if not cmd:
+                            print("martin: No last test recorded.")
+                            return True
+                        ok, stdout, stderr, rc, output_path, duration = _execute_command_with_policy(cmd, label="rerun test")
+                        try:
+                            st = load_state()
+                            st["tests_last"] = {
+                                "cmd": cmd,
+                                "rc": rc,
+                                "ok": ok,
+                                "duration_s": round(duration, 3),
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            }
+                            save_state(st)
+                        except Exception:
+                            pass
+                        return True
+                    print("martin: Use /rerun command or /rerun test.")
                     return True
                 if name == "tasks":
                     st = load_state()
@@ -1539,6 +1666,7 @@ def cmd_chat(cfg, args) -> int:
                 "If behavior = chat, respond directly to the user with a helpful reply, but follow the CRITICAL rule above.\n"
                 "If behavior = build/run/diagnose, output precise steps only if truly warranted.\n"
                 "If behavior = review, focus on bugs, risks, regressions, and missing tests; be concise and specific.\n"
+                "If behavior = review, format output with sections: Findings, Questions, Tests. Use bullets under Findings.\n"
                 "Do not mention internal analysis, guidance, or behavior classification."
             )
             payload = {
@@ -1645,6 +1773,8 @@ def cmd_chat(cfg, args) -> int:
                 return reply
 
             bot_response = _auto_command_for_request(user_input, bot_response)
+            if review_mode and "command:" not in (bot_response or "").lower():
+                bot_response = _format_review_response(bot_response)
 
             print(f"\033[92mmartin:\n{bot_response}\033[0m")
             transcript.append("martin: " + bot_response)
@@ -1731,6 +1861,7 @@ def cmd_chat(cfg, args) -> int:
                     print("\033[92mmartin: Understood - not running commands. I remain at your disposal.\033[0m")
                     logger.info("chat_cmd_denied count=%d", len(terminal_commands))
                     continue
+                _auto_context_surface("before plan run")
                 if any(r["level"] == "high" for r in risk_info):
                     try:
                         high_confirm = input("\033[91mHigh-risk commands detected. Type YES to proceed:\033[0m ").strip().lower()
@@ -1812,6 +1943,8 @@ def cmd_chat(cfg, args) -> int:
                                 ok, stdout_text, stderr_text, rc = False, "", reason, 2
                         else:
                             ok, stdout_text, stderr_text, rc = _run_cmd_with_worklog(step["cmd"])
+                    if rc == 130:
+                        print("\033[93mmartin: Command cancelled.\033[0m")
                     output = stdout_text
                     if stderr_text:
                         output = (stdout_text + "\n[stderr]\n" + stderr_text).strip()

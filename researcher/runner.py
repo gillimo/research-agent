@@ -129,6 +129,13 @@ def run_command_interactive(command_str: str) -> Tuple[bool, str]:
                             print(f"\n\033[92mmartin (summary):\n- " + summary.replace('\n', '\n- ') + "\033[0m\n")
                     since_last_summary = [] # Reset for next summary period
                     last_summary_ts = now
+            except KeyboardInterrupt:
+                transcript.append("\n[Cancelled]\n")
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+                return False, "".join(transcript)
             except OSError: # Child process might have closed the master_fd
                 break
     finally:
@@ -186,6 +193,12 @@ def run_command(command_str: str) -> Tuple[bool, str]:
         else:
             # Return stderr if command failed, or a generic message if stderr is empty
             return False, stderr_str if stderr_str else f"Command failed with return code {process.returncode}"
+    except KeyboardInterrupt:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        return False, "Command cancelled by user."
     except subprocess.TimeoutExpired:
         try:
             process.kill() # Ensure process is terminated
@@ -214,6 +227,12 @@ def run_command_capture(command_str: str) -> Tuple[bool, str, str, int]:
         stderr_str = stderr.decode(errors="ignore").strip() if stderr else ""
         rc = process.returncode
         return (rc == 0, stdout_str, stderr_str, rc)
+    except KeyboardInterrupt:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        return (False, "", "cancelled by user", 130)
     except subprocess.TimeoutExpired:
         try:
             process.kill()

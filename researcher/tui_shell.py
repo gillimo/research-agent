@@ -116,7 +116,7 @@ def _render_palette(entries: List[Dict[str, str]], selected: int) -> Panel:
 
 
 def _render_help() -> Panel:
-    text = "Keys: q=quit, p=palette, t=tasks, o=outputs, m=process, c=context, r=refresh, tab=focus, j/k|up/down=move, a=add task, x=done task, ?=help"
+    text = "Keys: q=quit, p=palette, t=tasks, o=outputs, m=process, c=context, r=refresh, f=filter outputs, tab=focus, j/k|up/down=move, a=add task, x=done task, ?=help"
     return Panel(text, title="Help", style=THEME["panel"])
 
 
@@ -261,6 +261,7 @@ def run_tui() -> None:
     focus = "left"
     help_mode = False
     selections = {"palette": 0, "tasks": 0, "outputs": 0}
+    outputs_filter = ""
     banner_mode = "tui"
     chat_ui.render_status_banner(context, last_cmd, mode=banner_mode)
     last_heartbeat = time.monotonic()
@@ -302,6 +303,8 @@ def run_tui() -> None:
                     tasks.pop(idx)
                     _save_tasks(st, tasks)
                     selections["tasks"] = _clamp_selection(selections["tasks"], tasks)
+            elif key in ("f",) and view == "outputs":
+                outputs_filter = _prompt_input(live, console, "Filter outputs (empty=clear): ").strip()
 
             now = time.monotonic()
             if now - last_heartbeat >= 30:
@@ -330,6 +333,8 @@ def run_tui() -> None:
                 right = _render_help() if help_mode else _render_context(context, tests_last)
             else:
                 outputs = sorted(outputs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True) if outputs_dir.exists() else []
+                if outputs_filter:
+                    outputs = [p for p in outputs if outputs_filter.lower() in str(p).lower()]
                 selections["outputs"] = _clamp_selection(selections["outputs"], outputs)
                 left = _render_outputs(outputs, selections["outputs"])
                 out = outputs[selections["outputs"]] if outputs else None

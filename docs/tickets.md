@@ -4,12 +4,15 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CX39: Context pack auto-surface
-2) CX41: Review mode formatting parity
-3) CX50: Interrupt/cancel running commands
-4) CX51: Rerun last command/test shortcut
-5) CX52: Output search/filter UX
-6) G9: Seed RAG starter pack for Martin
+1) CX53: Installable martin launcher
+2) CX54: Session privacy controls
+3) CX55: Binary/large file safety
+4) CX56: Model/provider status UX
+5) CX57: Workspace boundary guardrails
+6) CX58: Keybindings/help discoverability
+7) CX59: Recovery and retry UX
+8) CX60: First-run onboarding wizard
+9) G9: Seed RAG starter pack for Martin
 
 
 P0 – Safety/Secrets
@@ -268,18 +271,20 @@ P13 ? Codex UX parity (additional)
   Acceptance: diff view offers selectable file/line targets.  
   Notes: diff previews emit /open hints and slash command displays snippets.  
   Deps: CX15, CX36.
-- [ ] CX39: Context pack auto-surface  
+- [x] CX39: Context pack auto-surface  
   Automatically present context changes since last session without manual `/context`.  
   Acceptance: on session start or before plan execution, display context delta.  
+Notes: context updates auto-surface on session start and before plan runs.  
   Deps: CX16.
 - [x] CX40: Task queue UX panel  
   Add a dedicated task view (list/add/complete) in TUI with reminders.  
   Acceptance: tasks visible/editable in TUI and via slash commands.  
   Notes: TUI task list supports add (a) and done (x).  
   Deps: CX17, CX34.
-- [ ] CX41: Review mode formatting parity  
+- [x] CX41: Review mode formatting parity  
   Structured review output with sections for bugs, risks, and tests similar to Codex.  
   Acceptance: review mode enforces structured output and includes test guidance block.  
+Notes: review responses enforce Findings/Questions/Tests format.  
   Deps: CX9.
 - [x] CX42: Palette search across files/tests/outputs  
   Extend palette to search files, recent outputs, and test commands.  
@@ -320,18 +325,53 @@ P13 ? Codex UX parity (additional)
   Acceptance: startup and exit flows enforce/verify the MO; non-compliance is surfaced with next steps.  
   Notes: preflight checks and exit reminders enforce the MO.  
   Deps: DOC3, CX34.
-- [ ] CX50: Interrupt/cancel running commands  
+- [x] CX50: Interrupt/cancel running commands  
   Provide a reliable way to stop long-running commands (Ctrl+C or UI action) with clear status updates.  
   Acceptance: cancel is logged, user sees a confirmation, and the agent resumes cleanly.  
+Notes: Ctrl+C cancels running commands and logs cancellation.  
   Deps: CX34.
-- [ ] CX51: Rerun last command/test shortcut  
+- [x] CX51: Rerun last command/test shortcut  
   Add a quick action to rerun the last command or last test with safety prompts.  
   Acceptance: slash command or palette action reruns last command/test with approval/sandbox checks.  
+Notes: /rerun command|test replays last run with policy checks.  
   Deps: CX42, CX43.
-- [ ] CX52: Output search/filter UX  
+- [x] CX52: Output search/filter UX  
   Add output search/filtering in TUI and palette (by command, rc, or text).  
   Acceptance: a user can filter recent outputs and open the matching log quickly.  
+Notes: /outputs search and TUI filter provide output discovery.  
   Deps: CX25, CX34.
+- [ ] CX53: Installable martin launcher  
+  Provide a system-wide launcher (Windows shim/PATH) and uninstall flow.  
+  Acceptance: `martin` works from any shell; uninstall removes shim cleanly.  
+  Deps: Q2.
+- [ ] CX54: Session privacy controls  
+  Add session-level controls to redact/omit sensitive content in transcripts/log exports.  
+  Acceptance: a `no-log` or redacted mode prevents sensitive output from being persisted.  
+  Deps: CX12, CX26.
+- [ ] CX55: Binary/large file safety  
+  Handle binary or large files safely in /open and diff previews with size caps.  
+  Acceptance: binary files show safe stubs and large files are truncated with warnings.  
+  Deps: CX15, CX38.
+- [ ] CX56: Model/provider status UX  
+  Surface local/cloud model status in banner and /status with warnings.  
+  Acceptance: banner shows current model/provider and local-only warnings.  
+  Deps: CX18.
+- [ ] CX57: Workspace boundary guardrails  
+  Prompt/log when operating outside repo root and require confirmation.  
+  Acceptance: explicit confirmation for commands outside workspace with log entry.  
+  Deps: CX13.
+- [ ] CX58: Keybindings/help discoverability  
+  Add a `/keys` view or TUI help overlay showing active bindings.  
+  Acceptance: keybinding help is available in chat and TUI.  
+  Deps: CX34.
+- [ ] CX59: Recovery and retry UX  
+  Offer a resume/redo prompt after crashes or failed commands.  
+  Acceptance: last failed command can be retried safely with approval.  
+  Deps: CX11, CX12.
+- [ ] CX60: First-run onboarding wizard  
+  Add a guided setup flow (local-only toggle, handle, tests, log paths).  
+  Acceptance: first run steps are shown once and can be re-run via command.  
+  Deps: DOC3, CX49.
 
 P14 ? Martin-Librarian communication gaps
 - [ ] CL1: IPC protocol versioning + schema validation  

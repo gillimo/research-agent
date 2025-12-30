@@ -18,10 +18,10 @@ Recommended flow
 5) Nudge/oversight: `python -m researcher nudge [--idle-seconds 300]`  
    Emits a nudge if logs show idleness beyond the threshold.
 6) Interactive chat: `python -m researcher chat`  
-   Slash commands include `/history`, `/palette [pick <n>]`, `/files [pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, and `/context refresh`.  
+   Slash commands include `/history`, `/palette [pick <n>]`, `/files [pick <n>]`, `/open <path>:<line>`, `/worklog`, `/clock in|out`, `/rerun [command|test]`, `/outputs search <text>`, and `/context refresh`.  
    A workspace status banner summarizes git status and last command result.
 7) TUI shell: `python -m researcher tui`  
-   Keyboard-driven panels for palette, tasks, context, outputs, and process worklog (use `j/k` or arrows to navigate).
+   Keyboard-driven panels for palette, tasks, context, outputs, and process worklog (use `j/k` or arrows to navigate, `f` to filter outputs).
 
 UX cues
 - Tables use Rich for readable columns and headers.
