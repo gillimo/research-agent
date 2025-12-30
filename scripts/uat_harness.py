@@ -365,7 +365,28 @@ def main() -> int:
         text = step.get("input")
         wait_for = step.get("wait_for")
         wait_for_event = step.get("wait_for_event")
+        input_when_text = step.get("input_when_text")
+        input_when_event = step.get("input_when_event")
         if isinstance(text, str):
+            should_send = True
+            if input_when_text:
+                tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text)
+                with output_lock:
+                    blob = "".join(output_buffer)
+                for token in tokens:
+                    if token and token not in blob:
+                        should_send = False
+                        break
+            if should_send and input_when_event:
+                tokens = [input_when_event] if isinstance(input_when_event, str) else list(input_when_event)
+                with event_lock:
+                    seen = {payload.get("type") for payload in event_buffer}
+                for token in tokens:
+                    if token not in seen:
+                        should_send = False
+                        break
+            if not should_send:
+                continue
             if auto_wait and not wait_for and not mailbox_mode:
                 if use_socket:
                     found = True

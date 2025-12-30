@@ -728,6 +728,9 @@ P20 ? UAT harness stability
 - [x] UAT26: Extend follow-up wait timeouts  
   Increase follow-up prompt/approval waits to handle slow prompt generation.  
   Acceptance: follow-up waits do not time out on slower runs.
+- [x] UAT27: Conditional input support  
+  Allow steps to send inputs only when specific prompt text or events appear.  
+  Acceptance: scenarios can skip approval responses when prompts do not appear.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

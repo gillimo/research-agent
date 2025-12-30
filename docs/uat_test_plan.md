@@ -25,6 +25,7 @@ Automation harness (optional)
 - Use `steps[].wait_for_event` to assert socket events (e.g., `prompt`, `input_used`)
 - Use `event_log` (or `--event-log`) to capture all socket/stdout events in NDJSON for later review
 - Use `screenshot_dir` (or `--screenshot-dir`) to capture per-step output snapshots (text tail)
+- Use `input_when_text` or `input_when_event` to conditionally send inputs only when a prompt is present
 - Socket mode sends inputs over a test socket (`use_socket: true` in scenario)
 - Test socket can also be toggled via `MARTIN_TEST_SOCKET=1` (config: `test_socket`)
 - Mailbox mode is async: fire inputs, log outputs to `logs/uat_mailbox.ndjson`, and check later.

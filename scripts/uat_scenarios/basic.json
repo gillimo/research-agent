@@ -58,12 +58,9 @@
       "input_timeout": 15
     },
     {
-      "wait_for": "Approve running",
-      "timeout": 90
-    },
-    {
       "input": "no",
-      "input_timeout": 10
+      "input_timeout": 10,
+      "input_when_text": "Approve running"
     }
   ]
 }
