@@ -177,6 +177,17 @@ def main() -> int:
             r"Mark onboarding complete\?",
         ]
     prompt_regex = re.compile("|".join(prompt_tokens), re.IGNORECASE | re.MULTILINE)
+    expects_loop_ready = False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        wait_for_event = step.get("wait_for_event")
+        if isinstance(wait_for_event, str) and wait_for_event == "loop_ready":
+            expects_loop_ready = True
+            break
+        if isinstance(wait_for_event, list) and "loop_ready" in wait_for_event:
+            expects_loop_ready = True
+            break
 
     cmd = _build_command(args.entry or entry_override)
     if transcript:
@@ -343,7 +354,7 @@ def main() -> int:
             print("[error] Test socket did not respond to ping.", file=sys.stderr)
             proc.terminate()
             return 2
-        if not loop_ready_event.wait(timeout=float(args.socket_timeout)):
+        if not loop_ready_event.wait(timeout=float(args.socket_timeout)) and not expects_loop_ready:
             print("[warn] Loop readiness not confirmed before steps.", file=sys.stderr)
 
     cursor = 0
