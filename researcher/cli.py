@@ -1666,7 +1666,12 @@ def cmd_chat(cfg, args) -> int:
                             note_id = details.get("note_id", "")
                             ingestable = "summary" in details
                             flag = "[ingestable]" if ingestable else ""
-                            line = f"{idx}. {item.get('ts','')}: {event} {topic} {note_id} {flag}".strip()
+                            trust = details.get("trust_score")
+                            stale = details.get("stale")
+                            trust_txt = f"trust={trust:.2f}" if isinstance(trust, (int, float)) else ""
+                            stale_txt = "stale" if stale else ""
+                            extras = " ".join(p for p in [trust_txt, stale_txt] if p)
+                            line = f"{idx}. {item.get('ts','')}: {event} {topic} {note_id} {flag} {extras}".strip()
                             print(line)
                             if event == "rag_gap" and details.get("suggestion"):
                                 print(f"   suggestion: {details.get('suggestion')}")

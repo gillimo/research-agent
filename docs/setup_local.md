@@ -13,6 +13,8 @@ Prereqs
 - IPC allowlist (optional): set `LIBRARIAN_IPC_ALLOWLIST=127.0.0.1,::1` to limit IPC clients by host/IP.
 - IPC limits (optional): set `LIBRARIAN_IPC_MAX_BYTES` and `LIBRARIAN_IPC_CHUNK_BYTES` to cap message size and chunk large ingest payloads.
 - IPC retention (optional): set `LIBRARIAN_INBOX_MAX` and `LIBRARIAN_INBOX_RETENTION_DAYS` to cap inbox size and age.
+- Librarian policy (optional): set `LIBRARIAN_TOPIC_BLOCKLIST` (comma-separated) and `LIBRARIAN_SOURCE_STALE_DAYS` to block topics and flag stale sources.
+- Librarian gap rate limits (optional): set `LIBRARIAN_GAP_DEDUPE_S`, `LIBRARIAN_GAP_MAX_PER_TOPIC`, and `LIBRARIAN_GAP_WINDOW_S`.
 
 Environment layout
 - Clone/open `C:\Users\gilli\OneDrive\Desktop\research_agent`.

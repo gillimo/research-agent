@@ -5,6 +5,7 @@ import socket
 import struct
 import threading
 import hashlib
+import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -14,6 +15,7 @@ from researcher.cloud_bridge import call_cloud, CloudCallResult
 from researcher.ingester import ingest_files
 from researcher.config_loader import load_config
 from researcher.index_utils import load_index_from_config
+from researcher import sanitize
 
 LIBRARIAN_HEARTBEAT_INTERVAL_S = int(os.environ.get("LIBRARIAN_HEARTBEAT_INTERVAL_S", 10))
 PROTOCOL_VERSION = "1"
@@ -26,12 +28,23 @@ BACKOFF_BASE_S = float(os.environ.get("LIBRARIAN_BACKOFF_BASE_S", 2))
 BACKOFF_MAX_S = float(os.environ.get("LIBRARIAN_BACKOFF_MAX_S", 60))
 BREAKER_THRESHOLD = int(os.environ.get("LIBRARIAN_BREAKER_THRESHOLD", 3))
 BREAKER_COOLDOWN_S = int(os.environ.get("LIBRARIAN_BREAKER_COOLDOWN_S", 300))
+GAP_DEDUPE_WINDOW_S = int(os.environ.get("LIBRARIAN_GAP_DEDUPE_S", 3600))
+GAP_MAX_PER_TOPIC = int(os.environ.get("LIBRARIAN_GAP_MAX_PER_TOPIC", 3))
+GAP_WINDOW_S = int(os.environ.get("LIBRARIAN_GAP_WINDOW_S", 86400))
+SOURCE_STALE_DAYS = int(os.environ.get("LIBRARIAN_SOURCE_STALE_DAYS", 30))
+TOPIC_BLOCKLIST_ENV = "LIBRARIAN_TOPIC_BLOCKLIST"
 
 
 def _parse_allowlist(raw: str) -> List[str]:
     if not raw:
         return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _parse_blocklist(raw: str) -> List[str]:
+    if not raw:
+        return []
+    return [item.strip().lower() for item in raw.split(",") if item.strip()]
 
 
 def _note_id(text: str) -> str:
@@ -116,6 +129,31 @@ def _read_recent_gap_events(last_ts: str, limit: int = 200, cursor_path: Optiona
 def _now_ts() -> float:
     return time.time()
 
+
+def _iso_now() -> str:
+    return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+
+
+def _trust_score(ok: bool, output: str, sources: Optional[List[str]] = None) -> float:
+    score = 0.5
+    if ok:
+        score += 0.2
+    if output:
+        score += 0.1
+    if sources:
+        score += 0.1
+    return max(0.0, min(1.0, score))
+
+
+def _is_stale(ts: str, days: int) -> bool:
+    if not ts or days <= 0:
+        return False
+    try:
+        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return (datetime.datetime.now(datetime.UTC) - dt).days >= days
+    except Exception:
+        return False
+
 class Librarian:
     """
     The background Librarian process. Manages cloud interactions, RAG upkeep,
@@ -134,6 +172,7 @@ class Librarian:
         self.last_request_ts = None
         self.state = load_state()
         self.allowlist = _parse_allowlist(os.environ.get(ALLOWLIST_ENV, ""))
+        self.blocklist = _parse_blocklist(os.environ.get(TOPIC_BLOCKLIST_ENV, ""))
         self._chunk_buffers: Dict[str, Dict[str, Any]] = {}
         self.cloud_failures = 0
         self.cloud_backoff_until = 0.0
@@ -172,6 +211,31 @@ class Librarian:
             self.cloud_breaker_until = now + BREAKER_COOLDOWN_S
             self._log("Circuit breaker opened", level="warn", cooldown_s=BREAKER_COOLDOWN_S)
         return result
+
+    def _build_prompt(self, kind: str, topic: str) -> Tuple[Optional[str], Optional[str]]:
+        if not topic:
+            return None, "invalid_payload"
+        lowered = topic.lower()
+        if any(term in lowered for term in self.blocklist):
+            return None, "blocked_topic"
+        sanitized, _changed = sanitize.sanitize_prompt(topic)
+        if kind == "research":
+            prompt = (
+                "You are the Librarian agent collaborating with Martin. "
+                "Provide a concise, public-sources summary for the following topic. "
+                "Include 3-5 bullet takeaways and suggested keywords for local RAG ingest. "
+                f"Topic: {sanitized}"
+            )
+            return prompt, None
+        if kind == "sources":
+            prompt = (
+                "You are the Librarian agent collaborating with Martin. "
+                "List 5-8 public sources (title + URL) that could be used to build a local RAG for this topic. "
+                "Keep each source on its own line with a short description. "
+                f"Topic: {sanitized}"
+            )
+            return prompt, None
+        return None, "invalid_payload"
 
     def _handle_ingest_text(self, text: str, topic: str, source: str) -> Dict[str, Any]:
         if not text:
@@ -313,18 +377,14 @@ class Librarian:
         elif msg_type == "research_request":
             topic = message.get("topic", "").strip()
             intent = message.get("intent", "rag_update")
-            if not topic:
-                response = {"status": "error", "message": "Missing topic for research_request", "code": "invalid_payload"}
+            prompt, err = self._build_prompt("research", topic)
+            if err:
+                response = {"status": "error", "message": "Invalid topic for research_request", "code": err}
             else:
-                prompt = (
-                    "You are the Librarian agent collaborating with Martin. "
-                    "Provide a concise, public-sources summary for the following topic. "
-                    "Include 3-5 bullet takeaways and suggested keywords for local RAG ingest. "
-                    f"Topic: {topic}"
-                )
                 result = self._call_cloud_with_policy(prompt=prompt, cmd_template=message.get("cloud_cmd"))
                 output_hash = hashlib.sha256((result.output or "").encode("utf-8")).hexdigest() if result.output else ""
                 response = {"status": "success" if result.ok else "error", "result": result.__dict__}
+                trust_score = _trust_score(result.ok, result.output)
                 note = {
                     "type": "notification",
                     "event": "librarian_note",
@@ -335,6 +395,7 @@ class Librarian:
                         "ok": result.ok,
                         "hash": result.hash,
                         "output_hash": output_hash,
+                        "trust_score": trust_score,
                         "summary": (result.output or "")[:2000],
                         "error": result.error,
                     },
@@ -342,18 +403,22 @@ class Librarian:
                 self._send_notification_to_researcher(note)
         elif msg_type == "sources_request":
             topic = message.get("topic", "").strip()
-            if not topic:
-                response = {"status": "error", "message": "Missing topic for sources_request", "code": "invalid_payload"}
+            prompt, err = self._build_prompt("sources", topic)
+            if err:
+                response = {"status": "error", "message": "Invalid topic for sources_request", "code": err}
             else:
-                prompt = (
-                    "You are the Librarian agent collaborating with Martin. "
-                    "List 5-8 public sources (title + URL) that could be used to build a local RAG for this topic. "
-                    "Keep each source on its own line with a short description. "
-                    f"Topic: {topic}"
-                )
                 result = self._call_cloud_with_policy(prompt=prompt, cmd_template=message.get("cloud_cmd"))
                 response = {"status": "success" if result.ok else "error", "result": result.__dict__}
                 sources = _parse_sources(result.output or "")
+                trust_score = _trust_score(result.ok, result.output, sources=sources)
+                now_ts = _iso_now()
+                self.state.setdefault("librarian_sources", {})
+                self.state["librarian_sources"][topic] = {"ts": now_ts, "sources": sources}
+                try:
+                    from researcher.state_manager import save_state
+                    save_state(self.state)
+                except Exception:
+                    pass
                 note = {
                     "type": "notification",
                     "event": "librarian_sources",
@@ -364,6 +429,9 @@ class Librarian:
                         "hash": result.hash,
                         "sources_text": (result.output or "")[:4000],
                         "sources": sources,
+                        "trust_score": trust_score,
+                        "source_ts": now_ts,
+                        "stale": _is_stale(now_ts, SOURCE_STALE_DAYS),
                         "error": result.error,
                     },
                 }
@@ -496,9 +564,24 @@ class Librarian:
         self._cleanup_chunk_buffers()
         last_ts = self.state.get("librarian_last_gap_ts", "")
         gap_events = _read_recent_gap_events(last_ts, cursor_path=self.gap_cursor_path)
+        gap_history = self.state.get("librarian_gap_history", {}) if isinstance(self.state.get("librarian_gap_history", {}), dict) else {}
+        sources_state = self.state.get("librarian_sources", {}) if isinstance(self.state.get("librarian_sources", {}), dict) else {}
         for entry in gap_events:
             data = entry.get("data", {})
             topic = data.get("prompt", "")
+            if topic:
+                now_ts = _now_ts()
+                history = [t for t in gap_history.get(topic, []) if now_ts - t <= GAP_WINDOW_S]
+                if history and (now_ts - history[-1]) <= GAP_DEDUPE_WINDOW_S:
+                    log_event(self.state, "librarian_info", component="librarian", message="gap_deduped", topic=topic)
+                    gap_history[topic] = history
+                    continue
+                if len(history) >= GAP_MAX_PER_TOPIC:
+                    log_event(self.state, "librarian_warn", component="librarian", message="gap_rate_limited", topic=topic)
+                    gap_history[topic] = history
+                    continue
+                history.append(now_ts)
+                gap_history[topic] = history
             note = {
                 "type": "notification",
                 "event": "rag_gap",
@@ -509,6 +592,14 @@ class Librarian:
                     "suggestion": "Consider /librarian request <topic> or ingest more local sources.",
                 },
             }
+            if topic and topic in sources_state:
+                src = sources_state.get(topic, {})
+                src_ts = src.get("ts", "")
+                stale = _is_stale(src_ts, SOURCE_STALE_DAYS)
+                note["details"]["source_ts"] = src_ts
+                note["details"]["stale"] = stale
+                if stale:
+                    note["details"]["suggestion"] = "Sources are stale; use /librarian sources <topic> to refresh."
             self._send_notification_to_researcher(note)
             if self.cfg.get("auto_update", {}).get("sources_on_gap") and topic:
                 prompt = (
@@ -519,6 +610,15 @@ class Librarian:
                 )
                 result = self._call_cloud_with_policy(prompt=prompt, cmd_template=None)
                 sources = _parse_sources(result.output or "")
+                trust_score = _trust_score(result.ok, result.output, sources=sources)
+                now_iso = _iso_now()
+                self.state.setdefault("librarian_sources", {})
+                self.state["librarian_sources"][topic] = {"ts": now_iso, "sources": sources}
+                try:
+                    from researcher.state_manager import save_state
+                    save_state(self.state)
+                except Exception:
+                    pass
                 src_note = {
                     "type": "notification",
                     "event": "librarian_sources",
@@ -529,23 +629,36 @@ class Librarian:
                         "hash": result.hash,
                         "sources_text": (result.output or "")[:4000],
                         "sources": sources,
+                        "trust_score": trust_score,
+                        "source_ts": now_iso,
+                        "stale": _is_stale(now_iso, SOURCE_STALE_DAYS),
                         "error": result.error,
                     },
                 }
                 self._send_notification_to_researcher(src_note)
         if gap_events:
             self.state["librarian_last_gap_ts"] = gap_events[-1].get("ts", last_ts)
+        if gap_history:
+            self.state["librarian_gap_history"] = gap_history
             try:
                 from researcher.state_manager import save_state
                 save_state(self.state)
             except Exception:
                 pass
-        self._send_notification_to_researcher({
-            "type": "notification",
-            "event": "heartbeat",
-            "details": {"timestamp": time.time()}
-        })
-        self.last_heartbeat_ts = _now_ts()
+        now = _now_ts()
+        if gap_events or (now - self.last_heartbeat_ts) >= (LIBRARIAN_HEARTBEAT_INTERVAL_S * 3):
+            self._send_notification_to_researcher({
+                "type": "notification",
+                "event": "heartbeat",
+                "details": {
+                    "timestamp": now,
+                    "last_request_ts": self.last_request_ts,
+                    "gap_events": len(gap_events),
+                    "cloud_backoff_until": self.cloud_backoff_until,
+                    "cloud_breaker_until": self.cloud_breaker_until,
+                },
+            })
+            self.last_heartbeat_ts = now
         self.last_upkeep_time = time.time()
 
     def run(self) -> None:

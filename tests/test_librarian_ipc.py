@@ -20,6 +20,7 @@ def _run_librarian(port: int):
     os.environ["LIBRARIAN_IPC_CHUNK_BYTES"] = "200"
     os.environ["LIBRARIAN_TIMEOUT_S"] = "60"
     os.environ["RESEARCHER_FORCE_SIMPLE_INDEX"] = "1"
+    os.environ["LIBRARIAN_TOPIC_BLOCKLIST"] = "blockedtopic"
     os.environ["RESEARCHER_CLOUD_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
     from researcher.librarian import Librarian
@@ -35,6 +36,7 @@ def librarian_process():
     os.environ["LIBRARIAN_IPC_CHUNK_BYTES"] = "200"
     os.environ["LIBRARIAN_TIMEOUT_S"] = "60"
     os.environ["RESEARCHER_FORCE_SIMPLE_INDEX"] = "1"
+    os.environ["LIBRARIAN_TOPIC_BLOCKLIST"] = "blockedtopic"
     p = Process(target=_run_librarian, args=(port,), daemon=True)
     p.start()
     time.sleep(1)
@@ -70,6 +72,17 @@ def test_librarian_research_request(librarian_process):
     assert "status" in response
     assert "result" in response
     assert response.get("request_id") == client.last_request_id
+
+
+def test_librarian_blocked_topic(librarian_process):
+    address = librarian_process
+    from researcher.librarian_client import LibrarianClient
+    client = LibrarianClient(address=address)
+    response = client.request_research("blockedtopic details")
+    client.close()
+    assert response is not None
+    assert response.get("status") == "error"
+    assert response.get("code") == "blocked_topic"
 
 
 def test_librarian_cloud_query_requires_sanitized(librarian_process):

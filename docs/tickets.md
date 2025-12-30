@@ -4,11 +4,11 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CL13: Librarian trust scoring
-2) CL14: RAG source expiry + refresh
-3) CL15: Sanitized query templates
-4) CL17: Passive gap note dedupe + rate limits
-5) CL18: Adaptive heartbeat payload
+1) FG1: Workspace write hard-block option
+2) FG2: External editor provenance hook
+3) FG3: Centralized file-write policy gate for IPC ingest
+4) G3: Proprietary data scanner for ingest
+5) CL10: Ingest allowlist validation
 
 
 P0 – Safety/Secrets
@@ -440,15 +440,15 @@ Notes: protocol_version enforced on Librarian IPC requests/responses.
   Acceptance: inbox capped and old entries archived.  
   Deps: L5.
 
-- [ ] CL13: Librarian trust scoring  
+- [x] CL13: Librarian trust scoring  
   Tag librarian outputs with a trust score and provenance summary.  
   Acceptance: responses include trust score and source list in logs.  
   Deps: CL11.
-- [ ] CL14: RAG source expiry + refresh  
+- [x] CL14: RAG source expiry + refresh  
   Track source freshness and prompt for refresh when stale.  
   Acceptance: stale sources flagged and suggested for refresh.  
   Deps: L4, C2.
-- [ ] CL15: Sanitized query templates  
+- [x] CL15: Sanitized query templates  
   Standard templates for librarian prompts with blocklists per domain.  
   Acceptance: librarian requests use templates and enforce blocklists.  
   Deps: CX33.
@@ -456,11 +456,11 @@ Notes: protocol_version enforced on Librarian IPC requests/responses.
   Avoid scanning the ledger file on every heartbeat; track last cursor or maintain a compact gap index.  
   Acceptance: upkeep reads incremental gap events with stable performance on large ledgers.  
   Deps: CL11.
-- [ ] CL17: Passive gap note dedupe + rate limits  
+- [x] CL17: Passive gap note dedupe + rate limits  
   Deduplicate similar gap prompts and cap suggestions per topic per time window.  
   Acceptance: repeated gaps do not spam inbox; logs show dedupe decisions.  
   Deps: CL16, CL12.
-- [ ] CL18: Adaptive heartbeat payload  
+- [x] CL18: Adaptive heartbeat payload  
   Emit heartbeat only on changes or include concise health metrics (last request, queue length, last error).  
   Acceptance: heartbeat is less noisy and includes health summary fields.  
   Deps: CL5.
