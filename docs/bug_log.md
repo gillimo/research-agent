@@ -3,6 +3,8 @@ Bug Log
 
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
+- 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Occurs when SimpleIndex is active; needs explicit save path.
+- 2025-12-30: Chat auto-ingest crashed due to missing `re` import in `researcher/cli.py`; added import.
 - 2025-12-29: Windows cmd_template parsing kept quotes in argv, causing FileNotFoundError; stripped wrapped quotes in parser.
 - 2025-12-29: TUI preflight f-string syntax error in `researcher/tui_shell.py` caused pytest collection failure; fixed.
 - 2025-12-19: Agent lacks conversational context retention, gets sidetracked easily, and provides unhelpful responses due to apparent lack of understanding. This is a critical usability issue for the CLI tool.

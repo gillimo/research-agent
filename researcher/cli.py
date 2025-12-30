@@ -2,6 +2,7 @@ import argparse
 import datetime
 import logging
 import os
+import re
 import sys
 import time
 import json # Added for main loop
