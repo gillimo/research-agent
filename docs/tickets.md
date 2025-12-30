@@ -4,15 +4,11 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CX53: Installable martin launcher
-2) CX54: Session privacy controls
-3) CX55: Binary/large file safety
-4) CX56: Model/provider status UX
-5) CX57: Workspace boundary guardrails
-6) CX58: Keybindings/help discoverability
-7) CX59: Recovery and retry UX
-8) CX60: First-run onboarding wizard
-9) G9: Seed RAG starter pack for Martin
+1) CX58: Keybindings/help discoverability
+2) CX59: Recovery and retry UX
+3) CX60: First-run onboarding wizard
+4) G9: Seed RAG starter pack for Martin
+5) CL1: IPC protocol versioning + schema validation
 
 
 P0 – Safety/Secrets
@@ -340,25 +336,30 @@ Notes: /rerun command|test replays last run with policy checks.
   Acceptance: a user can filter recent outputs and open the matching log quickly.  
 Notes: /outputs search and TUI filter provide output discovery.  
   Deps: CX25, CX34.
-- [ ] CX53: Installable martin launcher  
+- [x] CX53: Installable martin launcher  
   Provide a system-wide launcher (Windows shim/PATH) and uninstall flow.  
   Acceptance: `martin` works from any shell; uninstall removes shim cleanly.  
+Notes: install/uninstall scripts added for Windows PATH shim.  
   Deps: Q2.
-- [ ] CX54: Session privacy controls  
+- [x] CX54: Session privacy controls  
   Add session-level controls to redact/omit sensitive content in transcripts/log exports.  
   Acceptance: a `no-log` or redacted mode prevents sensitive output from being persisted.  
+Notes: /privacy no-log mode skips transcript and ledger persistence.  
   Deps: CX12, CX26.
-- [ ] CX55: Binary/large file safety  
+- [x] CX55: Binary/large file safety  
   Handle binary or large files safely in /open and diff previews with size caps.  
   Acceptance: binary files show safe stubs and large files are truncated with warnings.  
+Notes: binary/large file previews are skipped with warnings.  
   Deps: CX15, CX38.
-- [ ] CX56: Model/provider status UX  
+- [x] CX56: Model/provider status UX  
   Surface local/cloud model status in banner and /status with warnings.  
   Acceptance: banner shows current model/provider and local-only warnings.  
+Notes: status banner includes model info and warnings.  
   Deps: CX18.
-- [ ] CX57: Workspace boundary guardrails  
+- [x] CX57: Workspace boundary guardrails  
   Prompt/log when operating outside repo root and require confirmation.  
   Acceptance: explicit confirmation for commands outside workspace with log entry.  
+Notes: outside-workspace commands require confirmation and are logged.  
   Deps: CX13.
 - [ ] CX58: Keybindings/help discoverability  
   Add a `/keys` view or TUI help overlay showing active bindings.  
@@ -423,6 +424,20 @@ P14 ? Martin-Librarian communication gaps
   Acceptance: inbox capped and old entries archived.  
   Deps: L5.
 
+- [ ] CL13: Librarian trust scoring  
+  Tag librarian outputs with a trust score and provenance summary.  
+  Acceptance: responses include trust score and source list in logs.  
+  Deps: CL11.
+- [ ] CL14: RAG source expiry + refresh  
+  Track source freshness and prompt for refresh when stale.  
+  Acceptance: stale sources flagged and suggested for refresh.  
+  Deps: L4, C2.
+- [ ] CL15: Sanitized query templates  
+  Standard templates for librarian prompts with blocklists per domain.  
+  Acceptance: librarian requests use templates and enforce blocklists.  
+  Deps: CX33.
+
+
 P15 ? Project goal completion (local control + proprietary safety)
 - [ ] G1: Local-only default posture  
   Default to local-only unless explicitly enabled by the user.  
@@ -460,6 +475,32 @@ P15 ? Project goal completion (local control + proprietary safety)
   Provide starter documents that teach how Martin operates, how to be an agent, and safe workflows.  
   Acceptance: initial docs live in `data/raw/martin_starter/` and are referenced in setup docs; `ingest` can load them.  
   Deps: C2, DOC3.
+
+- [ ] G10: Remote pairing + device registry  
+  Register machines and pair Martin to hosts with explicit approval.  
+  Acceptance: device list stored locally; pairing requires user confirmation.  
+  Deps: L1, CX13.
+- [ ] G11: Secure remote transport  
+  Encrypted channel for remote control (mTLS or SSH tunnel).  
+  Acceptance: remote commands travel over authenticated encrypted transport.  
+  Deps: G10.
+- [ ] G12: Remote command relay policy  
+  Enforce the same sandbox/approval policies on remote hosts.  
+  Acceptance: policy violations block remote execution with clear logs.  
+  Deps: G11, CX13.
+- [ ] G13: Multi-host UX  
+  Allow switching target host and show active host in the banner.  
+  Acceptance: `/host list|use <id>` works and banner shows host.  
+  Deps: G10.
+- [ ] G14: Remote data protection  
+  Encrypt at-rest logs and caches on remote hosts and sync redaction rules.  
+  Acceptance: remote logs are encrypted and follow trust policy.  
+  Deps: G11, G7.
+- [ ] G15: RAG trust labeling  
+  Label RAG sources by trust level and enforce retrieval constraints.  
+  Acceptance: sources marked public/internal and filtered by policy.  
+  Deps: G7, C2.
+
 
 P16 ? Operator guidance
 - [x] DOC3: Martin operator guide  

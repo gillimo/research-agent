@@ -11,6 +11,7 @@ from rich.table import Table
 from rich.live import Live
 
 from researcher.context_harvest import gather_context
+from researcher.config_loader import load_config
 from researcher.state_manager import load_state, save_state
 from researcher import chat_ui
 from researcher.worklog import append_worklog, read_worklog
@@ -263,7 +264,10 @@ def run_tui() -> None:
     selections = {"palette": 0, "tasks": 0, "outputs": 0}
     outputs_filter = ""
     banner_mode = "tui"
-    chat_ui.render_status_banner(context, last_cmd, mode=banner_mode)
+    cfg = load_config()
+    model_info = str(cfg.get("local_model") or cfg.get("embedding_model") or "local")
+    warn = "local-only" if cfg.get("local_only") else ""
+    chat_ui.render_status_banner(context, last_cmd, mode=banner_mode, model_info=model_info, warnings=warn)
     last_heartbeat = time.monotonic()
 
     with Live(_build_layout(header, _render_palette(palette_items, selections["palette"]), _render_context(context, tests_last), footer), console=console, refresh_per_second=4) as live:

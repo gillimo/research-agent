@@ -77,6 +77,7 @@ def _get_cli_logger(cfg):
 
 def get_status_payload(cfg, force_simple: bool = False) -> Dict[str, Any]:
     import time
+    from researcher.llm_utils import MODEL_MAIN
     t0 = time.perf_counter()
     idx = _load_index(cfg, force_simple=force_simple)
     load_ms = (time.perf_counter() - t0) * 1000.0
@@ -84,6 +85,7 @@ def get_status_payload(cfg, force_simple: bool = False) -> Dict[str, Any]:
     st = load_state()
     return {
         "version": __version__,
+        "model_main": MODEL_MAIN,
         "local_model": str(cfg.get("local_model")),
         "embedding_model": str(cfg.get("embedding_model")),
         "index_type": vs.get("type", "simple"),
@@ -640,12 +642,58 @@ def cmd_chat(cfg, args) -> int:
             "- Not run."
         )
 
+    def _outside_workspace_path(cmd: str) -> Optional[str]:
+        ws = Path.cwd().resolve()
+        try:
+            tokens = shlex.split(cmd)
+        except Exception:
+            tokens = cmd.split()
+        skip = {"&&", "||", "|", ">", ">>", "<", "<<", ";", "&"}
+        for idx, tok in enumerate(tokens):
+            if tok in skip or tok.startswith("-"):
+                continue
+            candidate = tok
+            if tok.lower() in ("cd", "set-location", "pushd") and idx + 1 < len(tokens):
+                candidate = tokens[idx + 1]
+            expanded = os.path.expandvars(os.path.expanduser(candidate))
+            try:
+                path = Path(expanded)
+            except Exception:
+                continue
+            if not path.is_absolute():
+                continue
+            try:
+                resolved = path.resolve()
+            except Exception:
+                resolved = path
+            if resolved != ws and ws not in resolved.parents:
+                return str(resolved)
+        return None
+
+    def _confirm_outside_workspace(target: str, cmd: str) -> bool:
+        if approval_policy == "never":
+            return False
+        try:
+            resp = input(f"\033[93mmartin: Command touches outside workspace ({target}). Proceed? (yes/no)\033[0m ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            resp = "no"
+        ok = resp == "yes"
+        try:
+            log_event(load_state(), "workspace_boundary", cmd=cmd, target=target, allowed=ok)
+        except Exception:
+            pass
+        return ok
+
     def _execute_command_with_policy(cmd: str, label: str = "command") -> Tuple[bool, str, str, int, str, float]:
         exec_cfg = cfg.get("execution", {}) or {}
         approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
         sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
         command_allowlist = exec_cfg.get("command_allowlist") or []
         command_denylist = exec_cfg.get("command_denylist") or []
+        outside = _outside_workspace_path(cmd)
+        if outside:
+            if not _confirm_outside_workspace(outside, cmd):
+                return False, "", "outside_workspace_blocked", 2, "", 0.0
         risk = classify_command_risk(cmd, command_allowlist, command_denylist)
         if risk["level"] == "blocked":
             print(f"\033[93mmartin: {label} blocked by policy.\033[0m")
@@ -675,29 +723,30 @@ def cmd_chat(cfg, args) -> int:
         if rc == 130:
             print("\033[93mmartin: Command cancelled.\033[0m")
         output_path = ""
-        if stdout and len(stdout) > 4000:
+        if stdout and len(stdout) > 4000 and not _privacy_enabled():
             output_path = _store_long_output(stdout, label)
         if stdout:
             print(_format_output_for_display(stdout))
         if stderr:
             print(_format_output_for_display(stderr), file=sys.stderr)
-        try:
-            append_tool_entry({
-                "command": cmd,
-                "cwd": str(Path.cwd()),
-                "rc": rc,
-                "ok": ok,
-                "duration_s": duration,
-                "stdout": stdout,
-                "stderr": stderr,
-                "output_path": output_path,
-                "risk": risk.get("level"),
-                "risk_reasons": risk.get("reasons"),
-                "sandbox_mode": sandbox_mode,
-                "approval_policy": approval_policy,
-            })
-        except Exception:
-            pass
+        if not _privacy_enabled():
+            try:
+                append_tool_entry({
+                    "command": cmd,
+                    "cwd": str(Path.cwd()),
+                    "rc": rc,
+                    "ok": ok,
+                    "duration_s": duration,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "output_path": output_path,
+                    "risk": risk.get("level"),
+                    "risk_reasons": risk.get("reasons"),
+                    "sandbox_mode": sandbox_mode,
+                    "approval_policy": approval_policy,
+                })
+            except Exception:
+                pass
         return ok, stdout, stderr, rc, output_path, duration
 
     def _mo_exit_check() -> None:
@@ -706,6 +755,12 @@ def cmd_chat(cfg, args) -> int:
         last_signoff = st.get("last_signoff_ts", "") if isinstance(st, dict) else ""
         if not last_signoff or (session_start and last_signoff < session_start):
             print("martin: Reminder: run /signoff for a session summary.")
+    def _privacy_enabled() -> bool:
+        try:
+            st = load_state()
+            return bool(st.get("session_privacy") == "no-log")
+        except Exception:
+            return False
     # Start the socket server
     socket_server_cfg = cfg.get("socket_server", {})
     server = SocketServer(
@@ -805,7 +860,14 @@ def cmd_chat(cfg, args) -> int:
                 last_cmd_summary = load_state().get("last_command_summary", {}) or {}
             except Exception:
                 last_cmd_summary = {}
-            chat_ui.render_status_banner(context_cache, last_cmd_summary, mode=("agent" if agent_mode else "manual"))
+            warn = "local-only" if cfg.get("local_only") else ("cloud-off" if not cloud_enabled else "")
+            chat_ui.render_status_banner(
+                context_cache,
+                last_cmd_summary,
+                mode=("agent" if agent_mode else "manual"),
+                model_info=MODEL_MAIN,
+                warnings=warn,
+            )
         except Exception:
             pass
         readline_mod = None
@@ -883,7 +945,7 @@ def cmd_chat(cfg, args) -> int:
                     should_exit = True
                     return True
                 if name == "help":
-                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /context [refresh], /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
+                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /privacy on|off|status, /context [refresh], /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
                     return True
                 if name == "clear":
                     transcript = []
@@ -916,6 +978,25 @@ def cmd_chat(cfg, args) -> int:
                         _prompt_clock("Clock-out")
                         return True
                     print("martin: Use /clock in or /clock out.")
+                    return True
+                if name == "privacy":
+                    st = load_state()
+                    sub = args[0].lower() if args else "status"
+                    if sub == "status":
+                        mode = st.get("session_privacy", "off")
+                        print(f"martin: privacy mode = {mode}")
+                        return True
+                    if sub == "on":
+                        st["session_privacy"] = "no-log"
+                        save_state(st)
+                        print("martin: privacy mode enabled (no-log).")
+                        return True
+                    if sub == "off":
+                        st["session_privacy"] = "off"
+                        save_state(st)
+                        print("martin: privacy mode disabled.")
+                        return True
+                    print("martin: Use /privacy on|off|status.")
                     return True
                 if name == "signoff":
                     if transcript:
@@ -1022,6 +1103,15 @@ def cmd_chat(cfg, args) -> int:
                     if not path.exists():
                         print(f"martin: File not found: {path}")
                         return True
+                    try:
+                        ws = Path.cwd().resolve()
+                        resolved = path.resolve()
+                        if resolved != ws and ws not in resolved.parents:
+                            if not _confirm_outside_workspace(str(resolved), f"open {resolved}"):
+                                print("martin: Open cancelled (outside workspace).")
+                                return True
+                    except Exception:
+                        pass
                     print(render_snippet(path, line_no))
                     return True
                 if name == "plan":
@@ -1096,6 +1186,9 @@ def cmd_chat(cfg, args) -> int:
                             print(f"{ts} rc={rc} cmd={cmd}")
                         return True
                     if args and args[0] == "export":
+                        if _privacy_enabled():
+                            print("martin: Privacy mode is on; ledger export is disabled.")
+                            return True
                         out_path = args[1] if len(args) > 1 else str(Path("logs") / "tool_ledger_export.json")
                         try:
                             content = build_export_json()
@@ -1330,6 +1423,9 @@ def cmd_chat(cfg, args) -> int:
                         return True
                     if args[0].lower() != "session":
                         print("martin: Use /export session <path>.")
+                        return True
+                    if _privacy_enabled():
+                        print("martin: Privacy mode is on; session export is disabled.")
                         return True
                     out_path = args[1] if len(args) > 1 else str(Path("logs") / "session_export.json")
                     st = load_state()
@@ -1584,9 +1680,10 @@ def cmd_chat(cfg, args) -> int:
             transcript.append("You: " + user_input)
             session_transcript.append("You: " + user_input)
             try:
-                st = load_state()
-                st["session_memory"] = {"transcript": session_transcript[-200:]}
-                save_state(st)
+                if not _privacy_enabled():
+                    st = load_state()
+                    st["session_memory"] = {"transcript": session_transcript[-200:]}
+                    save_state(st)
             except Exception:
                 pass
             if not _is_disagreement(user_input):
@@ -1780,9 +1877,10 @@ def cmd_chat(cfg, args) -> int:
             transcript.append("martin: " + bot_response)
             session_transcript.append("martin: " + bot_response)
             try:
-                st = load_state()
-                st["session_memory"] = {"transcript": session_transcript[-200:]}
-                save_state(st)
+                if not _privacy_enabled():
+                    st = load_state()
+                    st["session_memory"] = {"transcript": session_transcript[-200:]}
+                    save_state(st)
             except Exception:
                 pass
 
@@ -1927,8 +2025,11 @@ def cmd_chat(cfg, args) -> int:
                     step["ended_at"] = time.time()
                     step["duration_s"] = round(step["ended_at"] - started, 3)
                 else:
-                    # Enforce sandbox before running
-                    if step.get("risk") == "blocked":
+                    outside = _outside_workspace_path(step["cmd"])
+                    if outside and not _confirm_outside_workspace(outside, step["cmd"]):
+                        ok, output = False, f"outside workspace blocked ({outside})"
+                        stdout_text, stderr_text, rc = "", output, 2
+                    elif step.get("risk") == "blocked":
                         ok, output = False, "blocked by command policy"
                         stdout_text, stderr_text, rc = "", output, 2
                     elif step.get("risk") == "high":
@@ -1959,29 +2060,30 @@ def cmd_chat(cfg, args) -> int:
                     successes_this_turn += 1
                     output_path = ""
                     if output:
-                        stored = _store_long_output(output, "cmd")
+                        stored = _store_long_output(output, "cmd") if not _privacy_enabled() else ""
                         display = _format_output_for_display(output)
                         print(display)
                         if stored:
                             output_path = stored
                             print(f"[full output saved to {stored}]")
-                    try:
-                        append_tool_entry({
-                            "command": step["cmd"],
-                            "cwd": str(Path.cwd()),
-                            "rc": step.get("rc"),
-                            "ok": ok,
-                            "duration_s": step.get("duration_s"),
-                            "stdout": step.get("stdout"),
-                            "stderr": step.get("stderr"),
-                            "output_path": output_path,
-                            "risk": step.get("risk"),
-                            "risk_reasons": step.get("risk_reasons"),
-                            "sandbox_mode": sandbox_mode,
-                            "approval_policy": approval_policy,
-                        })
-                    except Exception:
-                        pass
+                    if not _privacy_enabled():
+                        try:
+                            append_tool_entry({
+                                "command": step["cmd"],
+                                "cwd": str(Path.cwd()),
+                                "rc": step.get("rc"),
+                                "ok": ok,
+                                "duration_s": step.get("duration_s"),
+                                "stdout": step.get("stdout"),
+                                "stderr": step.get("stderr"),
+                                "output_path": output_path,
+                                "risk": step.get("risk"),
+                                "risk_reasons": step.get("risk_reasons"),
+                                "sandbox_mode": sandbox_mode,
+                                "approval_policy": approval_policy,
+                            })
+                        except Exception:
+                            pass
                     try:
                         st = load_state()
                         st["last_command_summary"] = {
@@ -2039,7 +2141,7 @@ def cmd_chat(cfg, args) -> int:
                     failures_this_turn += 1
                     output_path = ""
                     if output:
-                        stored = _store_long_output(output, "cmd_fail")
+                        stored = _store_long_output(output, "cmd_fail") if not _privacy_enabled() else ""
                         display = _format_output_for_display(output)
                         print(display)
                         if stored:
@@ -2248,6 +2350,9 @@ def cmd_chat(cfg, args) -> int:
     if args.transcript:
         try:
             from researcher.file_utils import preview_write
+            if _privacy_enabled():
+                print("martin: Privacy mode is on; transcript write skipped.")
+                raise Exception("privacy enabled")
             content = "\n".join(transcript) + "\n"
             out_path = Path(args.transcript)
             if preview_write(out_path, content):
@@ -2271,31 +2376,33 @@ def cmd_chat(cfg, args) -> int:
             st["memory_history"] = history[-20:]
             st["memory"] = snapshot
             # Archive transcript for this run
-            t_hist = st.get("session_history", [])
-            if not isinstance(t_hist, list):
-                t_hist = []
-            if session_transcript:
-                t_hist.append({
-                    "ts": snapshot["ts"],
-                    "transcript": session_transcript[-500:],
-                })
-            st["session_history"] = t_hist[-10:]
-            st.pop("session_memory", None)
+            if not _privacy_enabled():
+                t_hist = st.get("session_history", [])
+                if not isinstance(t_hist, list):
+                    t_hist = []
+                if session_transcript:
+                    t_hist.append({
+                        "ts": snapshot["ts"],
+                        "transcript": session_transcript[-500:],
+                    })
+                st["session_history"] = t_hist[-10:]
+                st.pop("session_memory", None)
             save_state(st)
         except Exception:
             pass
     try:
-        st = load_state()
-        st["resume_snapshot"] = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "last_path": _LAST_PATH,
-            "last_listing": _LAST_LISTING[:100],
-            "last_plan": st.get("last_plan", {}),
-            "context_cache": st.get("context_cache", {}),
-            "transcript_tail": session_transcript[-200:],
-            "cwd": str(Path.cwd()),
-        }
-        save_state(st)
+        if not _privacy_enabled():
+            st = load_state()
+            st["resume_snapshot"] = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "last_path": _LAST_PATH,
+                "last_listing": _LAST_LISTING[:100],
+                "last_plan": st.get("last_plan", {}),
+                "context_cache": st.get("context_cache", {}),
+                "transcript_tail": session_transcript[-200:],
+                "cwd": str(Path.cwd()),
+            }
+            save_state(st)
     except Exception:
         pass
     try:

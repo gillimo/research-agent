@@ -7,7 +7,7 @@ from researcher.resource_registry import list_resources
 
 def get_slash_commands() -> List[str]:
     return [
-        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks", "/tests", "/rerun",
+        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/privacy", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks", "/tests", "/rerun",
         "/abilities", "/resources", "/resource", "/rag",
         "/agent", "/cloud", "/ask", "/ingest", "/compress", "/signoff", "/exit", "/catalog", "/review",
     ]
@@ -25,6 +25,7 @@ def get_command_descriptions() -> Dict[str, str]:
         "/open": "show file snippet at a line",
         "/worklog": "show recent worklog",
         "/clock": "clock in/out",
+        "/privacy": "toggle session privacy",
         "/context": "show context pack",
         "/plan": "show last plan",
         "/outputs": "list saved outputs",
@@ -328,7 +329,13 @@ def handle_history_command(
     return None
 
 
-def render_status_banner(context_cache: Dict[str, object], last_command: Dict[str, object], mode: str = "") -> None:
+def render_status_banner(
+    context_cache: Dict[str, object],
+    last_command: Dict[str, object],
+    mode: str = "",
+    model_info: str = "",
+    warnings: str = "",
+) -> None:
     git_line = ""
     try:
         git_status = (context_cache.get("git_status") or "").splitlines()
@@ -340,7 +347,9 @@ def render_status_banner(context_cache: Dict[str, object], last_command: Dict[st
     status = "ok" if (last_command or {}).get("ok") else "fail"
     suffix = f" | last: {status} ({last_rc}) {last_cmd}" if last_cmd else ""
     mode_txt = f" | mode: {mode}" if mode else ""
-    line = f"{git_line}{mode_txt}{suffix}".strip()
+    model_txt = f" | model: {model_info}" if model_info else ""
+    warn_txt = f" | warn: {warnings}" if warnings else ""
+    line = f"{git_line}{mode_txt}{model_txt}{warn_txt}{suffix}".strip()
     if not line:
         return
     try:
