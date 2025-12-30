@@ -366,6 +366,19 @@ def main() -> int:
                 baseline[token] = counter(token)
         return baseline
 
+    def _latest_prompt_text() -> str:
+        with event_lock:
+            for payload in reversed(event_buffer):
+                if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
+                    return payload.get("text") or ""
+        return ""
+
+    def _event_seen(token: str) -> bool:
+        if not token:
+            return False
+        with event_lock:
+            return any(payload.get("type") == token for payload in event_buffer)
+
     def _conditions_met(
         wait_text: Any,
         wait_event: Any,
@@ -468,19 +481,27 @@ def main() -> int:
             if mailbox_mode and (input_when_text or input_when_event):
                 should_send = False
             if input_when_text:
-                baseline_text = _baseline_counts(
-                    [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or []),
-                    _count_text_matches,
-                )
-                if not _conditions_met(input_when_text, None, baseline_text, None):
-                    should_send = False
+                tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
+                if not mailbox_mode:
+                    prompt_text = _latest_prompt_text()
+                    if not any(token and token in prompt_text for token in tokens):
+                        with output_lock:
+                            blob = "".join(output_buffer)
+                        if not any(token and token in blob for token in tokens):
+                            should_send = False
+                else:
+                    baseline_text = _baseline_counts(tokens, _count_text_matches)
+                    if not _conditions_met(input_when_text, None, baseline_text, None):
+                        should_send = False
             if should_send and input_when_event:
-                baseline_event = _baseline_counts(
-                    [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or []),
-                    _count_event_matches,
-                )
-                if not _conditions_met(None, input_when_event, None, baseline_event):
-                    should_send = False
+                tokens = [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or [])
+                if not mailbox_mode:
+                    if not any(_event_seen(token) for token in tokens):
+                        should_send = False
+                else:
+                    baseline_event = _baseline_counts(tokens, _count_event_matches)
+                    if not _conditions_met(None, input_when_event, None, baseline_event):
+                        should_send = False
             if not should_send:
                 text_tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
                 event_tokens = [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or [])

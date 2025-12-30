@@ -776,6 +776,9 @@ P20 ? UAT harness stability
 - [x] UAT42: Log pending send actions  
   Emit a `pending_send` entry when deferred inputs are sent.  
   Acceptance: event log shows which conditional inputs fired.
+- [x] UAT43: Non-mailbox conditional input readiness  
+  Check latest prompt/output immediately for `input_when_text/event` so pre-existing prompts don’t queue forever.  
+  Acceptance: conditional inputs fire immediately when prompt already visible outside mailbox mode.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

@@ -40,6 +40,7 @@ Bug Log
 - 2025-12-30: Prompt-aware matching skipped non-prompt tokens like "Done. OK"; fall back to output buffer when prompt texts don’t match.
 - 2025-12-30: Mailbox runs could exit with unsent pending inputs without any trace; log pending inputs in the event log for review.
 - 2025-12-30: Conditional approvals could fire on stale prompts because immediate sends didn't consume prompt counters; track consumption on immediate sends and log pending sends.
+- 2025-12-30: Immediate conditional sends could queue forever when prompt already present; use latest prompt/output checks in non-mailbox mode.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
