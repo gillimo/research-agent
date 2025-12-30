@@ -216,6 +216,7 @@ def main() -> int:
     event_buffer: List[Dict[str, Any]] = []
     event_lock = threading.Lock()
     socket_output_seen = threading.Event()
+    pending_inputs: List[Dict[str, Any]] = []
     socket_conn = None
     socket_reader = None
     prompt_event = threading.Event()
@@ -331,6 +332,34 @@ def main() -> int:
         proc.stdin.write(text + "\n")
         proc.stdin.flush()
 
+    def _conditions_met(wait_text: Any, wait_event: Any) -> bool:
+        if wait_text:
+            tokens = [wait_text] if isinstance(wait_text, str) else list(wait_text)
+            with output_lock:
+                blob = "".join(output_buffer)
+            for token in tokens:
+                if token and token not in blob:
+                    return False
+        if wait_event:
+            tokens = [wait_event] if isinstance(wait_event, str) else list(wait_event)
+            with event_lock:
+                seen = {payload.get("type") for payload in event_buffer}
+            for token in tokens:
+                if token not in seen:
+                    return False
+        return True
+
+    def _flush_pending() -> None:
+        if not pending_inputs:
+            return
+        remaining: List[Dict[str, Any]] = []
+        for item in pending_inputs:
+            if _conditions_met(item.get("input_when_text"), item.get("input_when_event")):
+                _send(item["input"])
+            else:
+                remaining.append(item)
+        pending_inputs[:] = remaining
+
     if use_socket:
         deadline = time.time() + float(args.socket_timeout)
         while time.time() < deadline:
@@ -373,22 +402,19 @@ def main() -> int:
         if isinstance(text, str):
             should_send = True
             if input_when_text:
-                tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text)
-                with output_lock:
-                    blob = "".join(output_buffer)
-                for token in tokens:
-                    if token and token not in blob:
-                        should_send = False
-                        break
+                if not _conditions_met(input_when_text, None):
+                    should_send = False
             if should_send and input_when_event:
-                tokens = [input_when_event] if isinstance(input_when_event, str) else list(input_when_event)
-                with event_lock:
-                    seen = {payload.get("type") for payload in event_buffer}
-                for token in tokens:
-                    if token not in seen:
-                        should_send = False
-                        break
+                if not _conditions_met(None, input_when_event):
+                    should_send = False
             if not should_send:
+                pending_inputs.append(
+                    {
+                        "input": text,
+                        "input_when_text": input_when_text,
+                        "input_when_event": input_when_event,
+                    }
+                )
                 continue
             if auto_wait and not wait_for and not mailbox_mode:
                 if use_socket:
@@ -444,6 +470,7 @@ def main() -> int:
         sleep_for = step.get("sleep", args.delay)
         if sleep_for:
             time.sleep(float(sleep_for))
+        _flush_pending()
         if screenshot_dir is not None:
             with output_lock:
                 snapshot = "".join(output_buffer)
@@ -456,7 +483,10 @@ def main() -> int:
                 pass
 
     if mailbox_mode:
-        time.sleep(float(args.mailbox_duration))
+        deadline = time.time() + float(args.mailbox_duration)
+        while time.time() < deadline:
+            _flush_pending()
+            time.sleep(0.1)
         _send("quit")
         time.sleep(0.25)
     if not args.keep_open and not mailbox_mode:

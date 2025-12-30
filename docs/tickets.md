@@ -737,7 +737,7 @@ P20 ? UAT harness stability
 - [x] UAT29: Gate approval responses in mailbox mode  
   Add `input_when_text` on approval prompts so mailbox runs don’t send early answers.  
   Acceptance: approval responses only send after the prompt appears.
-- [ ] UAT30: Deferred inputs for mailbox mode  
+- [x] UAT30: Deferred inputs for mailbox mode  
   Queue conditional inputs and send them once `input_when_text/event` becomes true.  
   Acceptance: mailbox runs can answer prompts asynchronously without skipping inputs.
 
