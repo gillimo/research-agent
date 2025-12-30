@@ -41,6 +41,19 @@ Bug Log
 - 2025-12-30: Mailbox runs could exit with unsent pending inputs without any trace; log pending inputs in the event log for review.
 - 2025-12-30: Conditional approvals could fire on stale prompts because immediate sends didn't consume prompt counters; track consumption on immediate sends and log pending sends.
 - 2025-12-30: Immediate conditional sends could queue forever when prompt already present; use latest prompt/output checks in non-mailbox mode.
+- 2025-12-30: Socket prompt events were duplicated (ANSI + plain), confusing conditional waits; normalize and de-dup prompt event text in the test bridge.
+- 2025-12-30: UAT scenarios waited for any prompt and sent user inputs during approval prompts; gate user inputs on the "You:" prompt.
+- 2025-12-30: Prompt-only conditions needed to avoid matching stale "You:" output; add input_when_prompt for prompt-gated sends.
+- 2025-12-30: UAT scenario declined plan approval but still waited for outside-workspace prompt; adjust scenario to accept approval when testing that path.
+- 2025-12-30: Outside-workspace prompt is not deterministic in UAT runs; remove that dependency from default scenarios.
+- 2025-12-30: UAT scenarios need conditional responses for workspace and diagnosis prompts to avoid hanging; add prompt-gated "no" responses.
+- 2025-12-30: UAT scenario timeouts were too short for long diagnosis/plan runs; extend Done OK and prompt waits.
+- 2025-12-30: Pending conditional inputs were not flushed during waits, causing prompt responses to arrive late; flush pending inputs on each wait tick.
+- 2025-12-30: UAT scenario order sent user questions before finishing auto-start plans; reorder steps to finish initial approvals first.
+- 2025-12-30: Mailbox pending inputs could fire on stale prompts; require latest prompt text to match before sending prompt-gated inputs.
+- 2025-12-30: Mailbox questions could be consumed by auto-start approval prompts; gate questions on Done OK + You prompt.
+- 2025-12-30: Mailbox scenario queued too many follow-ups and exited with pending inputs; trim to a single follow-up question.
+- 2025-12-30: Mailbox duration ended before the post-question approval prompt; extend mailbox duration for the default scenario.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

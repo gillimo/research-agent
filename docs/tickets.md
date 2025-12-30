@@ -779,6 +779,45 @@ P20 ? UAT harness stability
 - [x] UAT43: Non-mailbox conditional input readiness  
   Check latest prompt/output immediately for `input_when_text/event` so pre-existing prompts don’t queue forever.  
   Acceptance: conditional inputs fire immediately when prompt already visible outside mailbox mode.
+- [x] UAT44: Normalize prompt events  
+  Strip ANSI and de-dup near-identical prompt events in the test socket bridge.  
+  Acceptance: prompt events are emitted once per prompt and use normalized text.
+- [x] UAT45: Gate user inputs on user prompt  
+  Update UAT scenarios to send user inputs only when the "You:" prompt appears.  
+  Acceptance: user inputs are not injected during approval prompts.
+- [x] UAT46: Prompt-only conditional inputs  
+  Add `input_when_prompt` to gate steps on prompt text without falling back to output buffers.  
+  Acceptance: prompt-gated inputs wait for prompt events and don’t fire on stale output.
+- [x] UAT47: Scenario approval path alignment  
+  Accept the plan approval in scenarios that expect the outside-workspace prompt.  
+  Acceptance: scenario no longer waits on a prompt that can’t appear.
+- [x] UAT48: Remove nondeterministic outside-workspace waits  
+  Drop the outside-workspace prompt dependency from default UAT scenarios.  
+  Acceptance: default scenarios run without requiring policy prompts.
+- [x] UAT49: Conditional responses for policy/diagnosis prompts  
+  Add prompt-gated "no" responses for outside-workspace and fix-command prompts.  
+  Acceptance: scenarios don’t hang when policy or diagnosis prompts appear.
+- [x] UAT50: Extend scenario wait timeouts  
+  Increase Done OK/prompt wait times to tolerate slow diagnosis runs.  
+  Acceptance: default scenarios no longer time out during long plans.
+- [x] UAT51: Flush pending inputs during waits  
+  Ensure conditional inputs are checked while waiting for prompts/events/text.  
+  Acceptance: prompt-gated inputs fire without waiting for the next step boundary.
+- [x] UAT52: Reorder scenarios around auto-start plans  
+  Complete initial plan approvals before sending follow-up user questions.  
+  Acceptance: user questions are not injected during auto-start approval prompts.
+- [x] UAT53: Mailbox prompt gating uses latest prompt  
+  Prevent prompt-gated inputs from firing unless the most recent prompt matches.  
+  Acceptance: mailbox inputs do not reply to unrelated prompts.
+- [x] UAT54: Gate mailbox questions after completion  
+  Require Done OK + You prompt before sending mailbox questions.  
+  Acceptance: mailbox questions no longer answer approval prompts.
+- [x] UAT55: Trim mailbox scenario scope  
+  Limit mailbox run to a single follow-up question to avoid pending input backlog.  
+  Acceptance: mailbox scenario exits without pending inputs.
+- [x] UAT56: Extend mailbox duration  
+  Increase mailbox runtime to allow post-question approval prompts to be handled.  
+  Acceptance: mailbox scenario no longer quits mid-approval.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

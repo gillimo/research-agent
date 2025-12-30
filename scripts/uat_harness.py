@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 def _load_scenario(path: Optional[Path]) -> Dict[str, Any]:
@@ -34,9 +34,12 @@ def _wait_for_text(
     timeout: float,
     cursor: int = 0,
     lock: Optional[threading.Lock] = None,
+    on_tick: Optional[Callable[[], None]] = None,
 ) -> Tuple[bool, int]:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if on_tick:
+            on_tick()
         if lock:
             with lock:
                 chunk = "".join(buffer)
@@ -55,12 +58,15 @@ def _wait_for_prompt(
     timeout: float,
     cursor: int = 0,
     lock: Optional[threading.Lock] = None,
+    on_tick: Optional[Callable[[], None]] = None,
 ) -> Tuple[bool, int]:
     if timeout <= 0:
         deadline = None
     else:
         deadline = time.time() + timeout
     while deadline is None or time.time() < deadline:
+        if on_tick:
+            on_tick()
         if lock:
             with lock:
                 chunk = "".join(buffer)
@@ -79,10 +85,13 @@ def _wait_for_event(
     timeout: float,
     cursor: int = 0,
     lock: Optional[threading.Lock] = None,
+    on_tick: Optional[Callable[[], None]] = None,
 ) -> Tuple[bool, int]:
     deadline = time.time() + timeout
     target = {str(t).lower() for t in event_types}
     while time.time() < deadline:
+        if on_tick:
+            on_tick()
         if lock:
             with lock:
                 snapshot = events[cursor:]
@@ -222,6 +231,7 @@ def main() -> int:
     pending_inputs: List[Dict[str, Any]] = []
     consumed_text_counts: Dict[str, int] = {}
     consumed_event_counts: Dict[str, int] = {}
+    consumed_prompt_counts: Dict[str, int] = {}
     socket_conn = None
     socket_reader = None
     prompt_event = threading.Event()
@@ -353,6 +363,16 @@ def main() -> int:
             blob = "".join(output_buffer)
         return blob.count(token)
 
+    def _count_prompt_matches(token: str) -> int:
+        if not token:
+            return 0
+        prompt_texts: List[str] = []
+        with event_lock:
+            for payload in event_buffer:
+                if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
+                    prompt_texts.append(_strip_ansi(payload.get("text") or ""))
+        return sum(text.count(token) for text in prompt_texts if token in text)
+
     def _count_event_matches(token: str) -> int:
         if not token:
             return 0
@@ -407,16 +427,41 @@ def main() -> int:
                     return False
         return True
 
+    def _conditions_met_prompt(
+        wait_prompt: Any,
+        baseline_prompt: Optional[Dict[str, int]] = None,
+    ) -> bool:
+        if wait_prompt:
+            tokens = [wait_prompt] if isinstance(wait_prompt, str) else list(wait_prompt)
+            for token in tokens:
+                if not token:
+                    continue
+                total = _count_prompt_matches(token)
+                baseline = 0 if not baseline_prompt else baseline_prompt.get(token, 0)
+                consumed = consumed_prompt_counts.get(token, 0)
+                if total <= max(baseline, consumed):
+                    return False
+        return True
+
     def _flush_pending() -> None:
         if not pending_inputs:
             return
+        latest_prompt = _latest_prompt_text()
         remaining: List[Dict[str, Any]] = []
         for item in pending_inputs:
+            if mailbox_mode and item.get("input_when_prompt"):
+                tokens = [item.get("input_when_prompt")] if isinstance(item.get("input_when_prompt"), str) else list(item.get("input_when_prompt") or [])
+                if not any(token and token in latest_prompt for token in tokens):
+                    remaining.append(item)
+                    continue
             if _conditions_met(
                 item.get("input_when_text"),
                 item.get("input_when_event"),
                 item.get("baseline_text"),
                 item.get("baseline_event"),
+            ) and _conditions_met_prompt(
+                item.get("input_when_prompt"),
+                item.get("baseline_prompt"),
             ):
                 _send(item["input"])
                 _append_log(
@@ -427,12 +472,15 @@ def main() -> int:
                         "input": item.get("input"),
                         "input_when_text": item.get("input_when_text"),
                         "input_when_event": item.get("input_when_event"),
+                        "input_when_prompt": item.get("input_when_prompt"),
                     },
                 )
                 for token in item.get("baseline_text", {}):
                     consumed_text_counts[token] = consumed_text_counts.get(token, 0) + 1
                 for token in item.get("baseline_event", {}):
                     consumed_event_counts[token] = consumed_event_counts.get(token, 0) + 1
+                for token in item.get("baseline_prompt", {}):
+                    consumed_prompt_counts[token] = consumed_prompt_counts.get(token, 0) + 1
             else:
                 remaining.append(item)
         pending_inputs[:] = remaining
@@ -476,10 +524,21 @@ def main() -> int:
         wait_for_event = step.get("wait_for_event")
         input_when_text = step.get("input_when_text")
         input_when_event = step.get("input_when_event")
+        input_when_prompt = step.get("input_when_prompt")
         if isinstance(text, str):
             should_send = True
-            if mailbox_mode and (input_when_text or input_when_event):
+            if mailbox_mode and (input_when_text or input_when_event or input_when_prompt):
                 should_send = False
+            if input_when_prompt:
+                tokens = [input_when_prompt] if isinstance(input_when_prompt, str) else list(input_when_prompt or [])
+                if not mailbox_mode:
+                    prompt_text = _latest_prompt_text()
+                    if not any(token and token in prompt_text for token in tokens):
+                        should_send = False
+                else:
+                    baseline_prompt = _baseline_counts(tokens, _count_prompt_matches)
+                    if not _conditions_met_prompt(input_when_prompt, baseline_prompt):
+                        should_send = False
             if input_when_text:
                 tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
                 if not mailbox_mode:
@@ -505,13 +564,16 @@ def main() -> int:
             if not should_send:
                 text_tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
                 event_tokens = [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or [])
+                prompt_tokens = [input_when_prompt] if isinstance(input_when_prompt, str) else list(input_when_prompt or [])
                 pending_inputs.append(
                     {
                         "input": text,
                         "input_when_text": input_when_text,
                         "input_when_event": input_when_event,
+                        "input_when_prompt": input_when_prompt,
                         "baseline_text": _baseline_counts(text_tokens, _count_text_matches),
                         "baseline_event": _baseline_counts(event_tokens, _count_event_matches),
+                        "baseline_prompt": _baseline_counts(prompt_tokens, _count_prompt_matches),
                     }
                 )
                 continue
@@ -523,13 +585,22 @@ def main() -> int:
                 for token in [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or []):
                     if token:
                         consumed_event_counts[token] = consumed_event_counts.get(token, 0) + 1
+            if input_when_prompt:
+                for token in [input_when_prompt] if isinstance(input_when_prompt, str) else list(input_when_prompt or []):
+                    if token:
+                        consumed_prompt_counts[token] = consumed_prompt_counts.get(token, 0) + 1
             if auto_wait and not wait_for and not mailbox_mode:
                 if use_socket:
                     found = True
                 else:
                     step_timeout = float(step.get("prompt_timeout", args.prompt_timeout))
                     found, cursor = _wait_for_prompt(
-                        output_buffer, prompt_regex, step_timeout, cursor, output_lock
+                        output_buffer,
+                        prompt_regex,
+                        step_timeout,
+                        cursor,
+                        output_lock,
+                        on_tick=_flush_pending,
                     )
                 if not found:
                     print("[warn] Prompt not detected before input.", file=sys.stderr)
@@ -539,7 +610,12 @@ def main() -> int:
                 if used_timeout <= 0:
                     used_timeout = 3600.0
                 found, event_cursor = _wait_for_event(
-                    event_buffer, ["input_used"], used_timeout, event_cursor, event_lock
+                    event_buffer,
+                    ["input_used"],
+                    used_timeout,
+                    event_cursor,
+                    event_lock,
+                    on_tick=_flush_pending,
                 )
                 if not found:
                     matched = False
@@ -555,7 +631,14 @@ def main() -> int:
             if mailbox_mode:
                 continue
             timeout = float(step.get("timeout", args.timeout))
-            found, cursor = _wait_for_text(output_buffer, wait_for, timeout, cursor, output_lock)
+            found, cursor = _wait_for_text(
+                output_buffer,
+                wait_for,
+                timeout,
+                cursor,
+                output_lock,
+                on_tick=_flush_pending,
+            )
             if not found:
                 print(f"[warn] Expected text not found: {wait_for!r}", file=sys.stderr)
         if wait_for_event:
@@ -569,7 +652,14 @@ def main() -> int:
                 event_types = []
             if event_types:
                 timeout = float(step.get("timeout", args.timeout))
-                found, event_cursor = _wait_for_event(event_buffer, event_types, timeout, event_cursor, event_lock)
+                found, event_cursor = _wait_for_event(
+                    event_buffer,
+                    event_types,
+                    timeout,
+                    event_cursor,
+                    event_lock,
+                    on_tick=_flush_pending,
+                )
                 if not found:
                     print(f"[warn] Expected event not found: {event_types!r}", file=sys.stderr)
         if mailbox_mode:
@@ -605,6 +695,7 @@ def main() -> int:
                         {
                             "input_when_text": item.get("input_when_text"),
                             "input_when_event": item.get("input_when_event"),
+                            "input_when_prompt": item.get("input_when_prompt"),
                         }
                         for item in pending_inputs
                     ],

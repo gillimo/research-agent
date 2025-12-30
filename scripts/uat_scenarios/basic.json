@@ -22,47 +22,63 @@
       "input_timeout": 15
     },
     {
-      "wait_for_event": "prompt",
-      "timeout": 30
-    },
-    {
-      "input": "i want you to investigate this folder and tell me about the project",
-      "input_timeout": 15
-    },
-    {
       "wait_for": "Approve running",
       "timeout": 30
     },
     {
-      "input": "no",
+      "input": "yes",
       "input_timeout": 10,
-      "input_when_text": "Approve running"
+      "input_when_prompt": "Approve running"
     },
     {
-      "wait_for": "Command touches outside workspace",
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Command touches outside workspace"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Apply suggested fix commands now"
+    },
+    {
+      "wait_for": "Done. OK",
+      "timeout": 180
+    },
+    {
+      "wait_for_event": "prompt",
+      "timeout": 120
+    },
+    {
+      "input": "i want you to investigate this folder and tell me about the project",
+      "input_timeout": 15,
+      "input_when_prompt": "You:"
+    },
+    {
+      "wait_for": "Approve running",
       "timeout": 60
     },
     {
       "input": "no",
       "input_timeout": 10,
-      "input_when_text": "Command touches outside workspace"
-    },
-    {
-      "wait_for": "Done. OK",
-      "timeout": 90
+      "input_when_prompt": "Approve running"
     },
     {
       "wait_for_event": "prompt",
-      "timeout": 90
+      "timeout": 120
     },
     {
       "input": "what should we do next?",
-      "input_timeout": 15
+      "input_timeout": 15,
+      "input_when_prompt": "You:"
+    },
+    {
+      "wait_for": "Approve running",
+      "timeout": 60
     },
     {
       "input": "no",
       "input_timeout": 10,
-      "input_when_text": "Approve running"
+      "input_when_prompt": "Approve running"
     }
   ]
 }

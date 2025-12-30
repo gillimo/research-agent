@@ -1,10 +1,20 @@
 import json
 import os
 import queue
+import re
 import socket
 import threading
 import time
 from typing import Any, Dict, List, Optional
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    if not text:
+        return ""
+    return _ANSI_RE.sub("", text)
 
 
 class _TeeStream:
@@ -147,15 +157,20 @@ class TestSocketBridge:
                     self._clients.remove(client)
 
     def _emit_prompt(self, prompt: str) -> None:
-        self._last_prompt_at = time.time()
-        self._last_prompt_text = prompt or ""
+        normalized = _strip_ansi(prompt or "")
         if self._orig_stdout is not None and prompt:
             try:
                 self._orig_stdout.write(prompt)
                 self._orig_stdout.flush()
             except Exception:
                 pass
-        self.send_event({"type": "prompt", "text": prompt})
+        now = time.time()
+        if normalized and normalized == self._last_prompt_text and (now - self._last_prompt_at) < 0.2:
+            self._last_prompt_at = now
+            return
+        self._last_prompt_at = now
+        self._last_prompt_text = normalized
+        self.send_event({"type": "prompt", "text": normalized})
 
     def _accept_loop(self) -> None:
         while self._running.is_set():
