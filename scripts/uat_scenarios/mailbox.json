@@ -45,11 +45,11 @@
     },
     {
       "wait_for": "Done. OK",
-      "timeout": 60
+      "timeout": 90
     },
     {
       "wait_for_event": "prompt",
-      "timeout": 30
+      "timeout": 90
     },
     {
       "input": "what should we do next?",
@@ -57,7 +57,7 @@
     },
     {
       "wait_for": "Approve running",
-      "timeout": 30
+      "timeout": 90
     },
     {
       "input": "no",

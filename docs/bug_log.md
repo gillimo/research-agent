@@ -23,6 +23,7 @@ Bug Log
 - 2025-12-30: Socket UAT scenario sent follow-up question during diagnosis prompts; added wait for plan completion before asking next question.
 - 2025-12-30: Socket UAT scenario did not respond to outside-workspace confirmation prompt; added explicit wait + response.
 - 2025-12-30: Socket UAT scenario asked a follow-up question but did not respond to the subsequent approval prompt; added approval response.
+- 2025-12-30: Socket UAT follow-up waits were too short when Librarian connection retries delayed prompts; increased follow-up wait timeouts.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

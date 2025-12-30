@@ -725,6 +725,9 @@ P20 ? UAT harness stability
 - [x] UAT25: Handle follow-up approval prompt  
   After the follow-up question, respond to the approval prompt before quitting.  
   Acceptance: scenario does not leave the plan approval prompt pending.
+- [x] UAT26: Extend follow-up wait timeouts  
+  Increase follow-up prompt/approval waits to handle slow prompt generation.  
+  Acceptance: follow-up waits do not time out on slower runs.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
