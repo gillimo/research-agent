@@ -680,6 +680,9 @@ P20 ? UAT harness stability
 - [x] UAT10: Update socket scenarios to wait for prompt events  
   Add `wait_for_event` for `loop_ready` and `prompt` before sending inputs.  
   Acceptance: scenarios no longer race and are stable in socket mode.
+- [x] UAT11: Always-available event log  
+  Add `event_log` to capture socket/stdout events in NDJSON for any run.  
+  Acceptance: `event_log` records events outside mailbox mode.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

@@ -23,6 +23,7 @@ Automation harness (optional)
 - Add `--transcript logs/uat_transcript.txt` to capture a session log
 - Extend scenario JSON with `steps[].wait_for` to assert expected output
 - Use `steps[].wait_for_event` to assert socket events (e.g., `prompt`, `input_used`)
+- Use `event_log` (or `--event-log`) to capture all socket/stdout events in NDJSON for later review
 - Socket mode sends inputs over a test socket (`use_socket: true` in scenario)
 - Test socket can also be toggled via `MARTIN_TEST_SOCKET=1` (config: `test_socket`)
 - Mailbox mode is async: fire inputs, log outputs to `logs/uat_mailbox.ndjson`, and check later.

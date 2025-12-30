@@ -101,7 +101,7 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
 
-def _append_mailbox(log_path: Optional[Path], payload: Dict[str, Any]) -> None:
+def _append_log(log_path: Optional[Path], payload: Dict[str, Any]) -> None:
     if log_path is None:
         return
     try:
@@ -132,6 +132,7 @@ def main() -> int:
     parser.add_argument("--mailbox", action="store_true", help="Mailbox mode: fire inputs and log events asynchronously.")
     parser.add_argument("--mailbox-log", type=Path, help="Mailbox log path (NDJSON).")
     parser.add_argument("--mailbox-duration", type=float, default=6.0, help="Seconds to keep session alive in mailbox mode.")
+    parser.add_argument("--event-log", type=Path, help="Event log path (NDJSON) for any run.")
     args = parser.parse_args()
 
     scenario = _load_scenario(args.scenario)
@@ -149,6 +150,7 @@ def main() -> int:
     mailbox_log = args.mailbox_log or (Path(scenario.get("mailbox_log")) if isinstance(scenario, dict) and scenario.get("mailbox_log") else None)
     if mailbox_mode and mailbox_log is None:
         mailbox_log = Path("logs") / "uat_mailbox.ndjson"
+    event_log = args.event_log or (Path(scenario.get("event_log")) if isinstance(scenario, dict) and scenario.get("event_log") else None)
     auto_wait = scenario.get("auto_wait", True) if isinstance(scenario, dict) else True
     if args.no_auto_wait:
         auto_wait = False
@@ -226,7 +228,8 @@ def main() -> int:
                         last_line["value"] = cleaned
                     output_buffer.append(cleaned)
                 _signal_prompt_if_match(cleaned)
-                _append_mailbox(mailbox_log, {"ts": time.time(), "type": "stdout", "text": cleaned})
+                _append_log(mailbox_log, {"ts": time.time(), "type": "stdout", "text": cleaned})
+                _append_log(event_log, {"ts": time.time(), "type": "stdout", "text": cleaned})
             if args.echo and (not use_socket or os.environ.get("MARTIN_TEST_SOCKET_DEBUG") == "1"):
                 print(line, end="")
 
@@ -267,10 +270,12 @@ def main() -> int:
                             output_buffer.append(cleaned)
                     if args.echo:
                         print(text, end="")
-                    _append_mailbox(mailbox_log, {"ts": time.time(), "type": msg_type or "socket", "text": cleaned})
+                    _append_log(mailbox_log, {"ts": time.time(), "type": msg_type or "socket", "text": cleaned})
+                    _append_log(event_log, {"ts": time.time(), "type": msg_type or "socket", "text": cleaned})
                 if msg_type:
                     with event_lock:
                         event_buffer.append({"ts": time.time(), "type": msg_type, "text": text})
+                    _append_log(event_log, {"ts": time.time(), "type": msg_type, "text": text})
                 if msg_type == "prompt":
                     with output_lock:
                         output_buffer.append("PROMPT_READY")
