@@ -2,6 +2,7 @@ import os
 import re
 import datetime
 import difflib
+import pydoc
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -68,11 +69,17 @@ def _preview_and_confirm(path: Path, before: str, after: str) -> bool:
         head = diff_lines[:120]
         tail = diff_lines[-80:]
         print("\033[96mmartin: Diff preview (truncated)\033[0m")
+        print(f"File: {path}")
+        print("Hint: hunk headers like @@ -a,b +c,d indicate line ranges.")
         print("\n".join(head))
         print("... [diff truncated] ...")
         print("\n".join(tail))
+        if not _auto_apply_enabled() and _ask_yes_no("View full diff in pager?", default_no=False):
+            pydoc.pager("\n".join(diff_lines))
     else:
         print("\033[96mmartin: Diff preview\033[0m")
+        print(f"File: {path}")
+        print("Hint: hunk headers like @@ -a,b +c,d indicate line ranges.")
         print("\n".join(diff_lines))
     if _auto_apply_enabled():
         return True

@@ -1,243 +1,368 @@
 import time
 import os
 import json
+import socket
+import struct
+import threading
+import hashlib
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from multiprocessing.connection import Listener, wait # New import for IPC listener
+from typing import Dict, Any, Optional, List, Tuple
 
-# Import state manager for logging, even in background process
-from researcher.state_manager import load_state, log_event, ROOT_DIR
-from researcher.librarian_client import LIBRARIAN_IPC_ADDR, LIBRARIAN_IPC_TYPE, LIBRARIAN_IPC_TIMEOUT_S # Import IPC config from client
-from researcher.cloud_bridge import call_cloud, CloudCallResult # Import for cloud querying
-from researcher.ingester import ingest_files # Import for ingestion
-from researcher.config_loader import load_config # Import for configuration
-from researcher.index_utils import load_index_from_config # Import for loading RAG index
+from researcher.state_manager import load_state, log_event, ROOT_DIR, LEDGER_FILE
+from researcher.librarian_client import LIBRARIAN_HOST, LIBRARIAN_PORT
+from researcher.cloud_bridge import call_cloud, CloudCallResult
+from researcher.ingester import ingest_files
+from researcher.config_loader import load_config
+from researcher.index_utils import load_index_from_config
 
-
-# --- Librarian Configuration ---
 LIBRARIAN_HEARTBEAT_INTERVAL_S = int(os.environ.get("LIBRARIAN_HEARTBEAT_INTERVAL_S", 10))
-# LIBRARIAN_IPC_PATH = ROOT_DIR / "ipc" / "librarian_pipe" # No longer needed, using LIBRARIAN_IPC_ADDR from client
 
+
+def _note_id(text: str) -> str:
+    h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return h[:12]
+
+
+def _parse_sources(text: str) -> List[str]:
+    lines = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line[0] in ("-", "*"):
+            line = line[1:].strip()
+        if len(line) >= 3 and line[:2].isdigit() and line[2:3] == ".":
+            line = line[3:].strip()
+        elif len(line) >= 2 and line[0].isdigit() and line[1:2] == ".":
+            line = line[2:].strip()
+        if line:
+            lines.append(line)
+    return lines[:10]
+
+
+def _read_recent_gap_events(last_ts: str, limit: int = 200) -> List[Dict[str, Any]]:
+    if not LEDGER_FILE.exists():
+        return []
+    try:
+        lines = LEDGER_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    events: List[Dict[str, Any]] = []
+    for line in lines[-limit:]:
+        try:
+            row = json.loads(line)
+            entry = row.get("entry", {})
+            if entry.get("event") != "rag_gap":
+                continue
+            ts = entry.get("ts", "")
+            if last_ts and ts <= last_ts:
+                continue
+            events.append(entry)
+        except Exception:
+            continue
+    return events
 
 class Librarian:
     """
-    The background Librarian process for the researcher agent.
-    Manages cloud interactions, RAG upkeep, and listens for Researcher commands.
+    The background Librarian process. Manages cloud interactions, RAG upkeep,
+    and listens for Researcher commands via a raw TCP socket.
     """
-    def __init__(self, address: Optional[Any] = None, debug_mode: bool = False, authkey: bytes = b'librarian_secret') -> None:
-        self.address = address or LIBRARIAN_IPC_ADDR
+    def __init__(self, debug_mode: bool = False) -> None:
+        self.cfg = load_config()
+        server_cfg = self.cfg.get("socket_server", {})
+        self.researcher_addr = (server_cfg.get("host"), server_cfg.get("port"))
+        
+        self.address = (LIBRARIAN_HOST, LIBRARIAN_PORT)
         self.debug_mode = debug_mode
         self.running = True
         self.last_upkeep_time = time.time()
-        self.state = load_state() # Load shared state for logging
-        self.listener: Optional[Listener] = None
-        self.authkey = authkey
-        self.cfg = load_config() # Load researcher config for RAG and cloud settings
-        self._setup_listener()
-
-    def _setup_listener(self) -> None:
-        """Sets up the IPC listener for Researcher communication."""
-        try:
-            # Clean up old socket if it exists (for Unix domain sockets)
-            if LIBRARIAN_IPC_TYPE == 'AF_UNIX' and Path(self.address).exists():
-                Path(self.address).unlink()
-            
-            self.listener = Listener(address=self.address, family=LIBRARIAN_IPC_TYPE, authkey=self.authkey)
-            self._log("IPC Listener set up", address=str(self.address), type=LIBRARIAN_IPC_TYPE)
-        except OSError as e:
-            # Address already in use error (WSAEADDRINUSE)
-            if e.winerror == 10048:
-                self._log("Failed to set up IPC Listener: Address already in use.", level="error", error=str(e), address=str(self.address))
-            else:
-                self._log("Failed to set up IPC Listener due to OSError", level="error", error=str(e), address=str(self.address))
-            self.running = False
-        except Exception as e:
-            self._log("Failed to set up IPC Listener", level="error", error=str(e), address=str(self.address))
-            self.running = False # Cannot run without listener
+        self.state = load_state()
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     def _log(self, message: str, level: str = "info", **data: Any) -> None:
-        """Helper to log events through the state manager."""
         event_data = {"component": "librarian", "message": message, **data}
         log_event(self.state, f"librarian_{level}", **event_data)
         if self.debug_mode:
             print(f"[Librarian {level.upper()}] {message} {json.dumps(data) if data else ''}")
 
+    def _send_notification_to_researcher(self, notification: Dict[str, Any]):
+        """Sends a notification to the researcher's socket server."""
+        if not self.researcher_addr[0] or not self.researcher_addr[1]:
+            self._log("Cannot send notification: researcher socket_server not configured.", level="warn")
+            return
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect(self.researcher_addr)
+                msg_json = json.dumps(notification).encode('utf-8')
+                msg_len = struct.pack('!I', len(msg_json))
+                sock.sendall(msg_len + msg_json)
+                
+                # Wait for acknowledgment
+                resp_len_bytes = sock.recv(4)
+                if resp_len_bytes:
+                    resp_len = struct.unpack('!I', resp_len_bytes)[0]
+                    response = sock.recv(resp_len)
+                    self._log("Sent notification to researcher and received response.", notification=notification, response=response.decode("utf-8"))
+        except ConnectionRefusedError:
+            self._log("Could not connect to researcher's socket server. It may not be running.", level="warn", host=self.researcher_addr[0], port=self.researcher_addr[1])
+        except Exception as e:
+            self._log("Failed to send notification to researcher.", level="error", error=str(e))
+
     def _handle_ipc_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handles incoming IPC messages from the Researcher."""
-        self._log("Received IPC message", message_type=message.get("type"), message=message)
+        self._log("Received IPC message", message_type=message.get("type"))
         response: Dict[str, Any] = {"status": "error", "message": "Unknown message type"}
-
         msg_type = message.get("type")
+
         if msg_type == "shutdown":
             self.running = False
             response = {"status": "success", "message": "Librarian shutting down"}
         elif msg_type == "status_request":
-            response = {
-                "status": "success",
-                "message": "Librarian is running",
-                "uptime": time.time() - self.state.get("last_session", {}).get("started_at", time.time()),
-                "last_upkeep": self.last_upkeep_time
-            }
+            response = {"status": "success", "message": "Librarian is running"}
         elif msg_type == "cloud_query":
             prompt = message.get("prompt", "")
-            # cloud_mode is from Researcher, Librarian always acts on demand.
-            # No need for cloud_mode in call_cloud, just take the prompt.
-            # cmd_template from message might override librarian's default if provided.
             cmd_template = message.get("cloud_cmd")
-            # cloud_threshold from message not directly used here
-            
-            self._log("Processing cloud query", prompt_len=len(prompt))
-            
-            # Call cloud_bridge.call_cloud
-            result: CloudCallResult = call_cloud(
-                prompt=prompt,
-                cmd_template=cmd_template, # cmd_template is passed from Researcher
-                logs_root=Path(self.cfg.get("data_paths", {}).get("logs", "logs")) / "cloud", # Use config path
-                timeout=self.cfg.get("cloud", {}).get("timeout", 60) # Use config timeout
-            )
-            response = {
-                "status": "success" if result.ok else "error",
-                "message": "Cloud query completed",
-                "result": {
-                    "ok": result.ok,
-                    "output": result.output,
-                    "error": result.error,
-                    "rc": result.rc,
-                    "sanitized": result.sanitized,
-                    "changed": result.changed,
-                    "hash": result.hash
+            result: CloudCallResult = call_cloud(prompt=prompt, cmd_template=cmd_template)
+            response = {"status": "success" if result.ok else "error", "result": result.__dict__}
+        elif msg_type == "research_request":
+            topic = message.get("topic", "").strip()
+            intent = message.get("intent", "rag_update")
+            if not topic:
+                response = {"status": "error", "message": "Missing topic for research_request"}
+            else:
+                prompt = (
+                    "You are the Librarian agent collaborating with Martin. "
+                    "Provide a concise, public-sources summary for the following topic. "
+                    "Include 3-5 bullet takeaways and suggested keywords for local RAG ingest. "
+                    f"Topic: {topic}"
+                )
+                result = call_cloud(prompt=prompt, cmd_template=message.get("cloud_cmd"))
+                output_hash = hashlib.sha256((result.output or "").encode("utf-8")).hexdigest() if result.output else ""
+                response = {"status": "success" if result.ok else "error", "result": result.__dict__}
+                note = {
+                    "type": "notification",
+                    "event": "librarian_note",
+                    "details": {
+                        "note_id": _note_id(topic + (result.output or "")),
+                        "topic": topic,
+                        "intent": intent,
+                        "ok": result.ok,
+                        "hash": result.hash,
+                        "output_hash": output_hash,
+                        "summary": (result.output or "")[:2000],
+                        "error": result.error,
+                    },
                 }
-            }
+                self._send_notification_to_researcher(note)
+        elif msg_type == "sources_request":
+            topic = message.get("topic", "").strip()
+            if not topic:
+                response = {"status": "error", "message": "Missing topic for sources_request"}
+            else:
+                prompt = (
+                    "You are the Librarian agent collaborating with Martin. "
+                    "List 5-8 public sources (title + URL) that could be used to build a local RAG for this topic. "
+                    "Keep each source on its own line with a short description. "
+                    f"Topic: {topic}"
+                )
+                result = call_cloud(prompt=prompt, cmd_template=message.get("cloud_cmd"))
+                response = {"status": "success" if result.ok else "error", "result": result.__dict__}
+                sources = _parse_sources(result.output or "")
+                note = {
+                    "type": "notification",
+                    "event": "librarian_sources",
+                    "details": {
+                        "note_id": _note_id(topic + (result.output or "")),
+                        "topic": topic,
+                        "ok": result.ok,
+                        "hash": result.hash,
+                        "sources_text": (result.output or "")[:4000],
+                        "sources": sources,
+                        "error": result.error,
+                    },
+                }
+                self._send_notification_to_researcher(note)
+        elif msg_type == "ingest_text":
+            text = message.get("text", "").strip()
+            topic = message.get("topic", "").strip() or "librarian_note"
+            source = message.get("source", "librarian_note")
+            if not text:
+                response = {"status": "error", "message": "Missing text for ingest_text"}
+            else:
+                notes_dir = (ROOT_DIR / "data" / "processed" / "librarian_notes")
+                notes_dir.mkdir(parents=True, exist_ok=True)
+                ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+                safe_topic = "".join(ch for ch in topic if ch.isalnum() or ch in ("-", "_")).strip() or "note"
+                path = notes_dir / f"{ts}_{safe_topic}.txt"
+                content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                header = [
+                    f"# source: {source}",
+                    f"# topic: {topic}",
+                    f"# hash: {content_hash}",
+                    f"# ts: {ts}",
+                    "",
+                ]
+                path.write_text("\n".join(header) + text + "\n", encoding="utf-8")
+                idx = load_index_from_config(self.cfg)
+                ingest_result = ingest_files(idx, [path])
+                if hasattr(idx, "save"):
+                    idx.save()
+                response = {"status": "success", "result": ingest_result}
+                log_event(self.state, "librarian_ingest_text", topic=topic, source=source, hash=content_hash, path=str(path))
+                self._send_notification_to_researcher({
+                    "type": "notification",
+                    "event": "ingestion_complete",
+                    "details": {"source": source, "path": str(path), "hash": content_hash, "result": ingest_result},
+                })
         elif msg_type == "ingest_request":
             paths_str: List[str] = message.get("paths", [])
-            if not paths_str:
-                response = {"status": "error", "message": "No paths provided for ingestion."}
-            else:
-                self._log("Processing ingest request", paths_count=len(paths_str))
-                # Load config dynamically to ensure it's fresh (or use self.cfg if updated periodically)
-                # Using self.cfg for now, assuming it's up-to-date.
-                idx = load_index_from_config(self.cfg)
-                files = [Path(p) for p in paths_str if Path(p).exists()]
-                ingest_result = ingest_files(idx, files)
-                
-                # Persist index after ingestion
-                if hasattr(idx, 'save'): # Both SimpleIndex and FaissIndex have save()
-                    idx.save()
-                
-                response = {
-                    "status": "success",
-                    "message": "Ingestion completed",
-                    "result": {
-                        "ingested": ingest_result.get("ingested", 0),
-                        "errors": [str(e) for e in ingest_result.get("errors", [])]
-                    }
-                }
-        elif msg_type == "get_card_catalog":
-            self._log("Processing card catalog request")
             idx = load_index_from_config(self.cfg)
-            
-            catalog_data = {"total_docs": 0, "card_catalog": {}}
-            if hasattr(idx, "meta") and idx.meta:
-                all_paths = set()
-                for meta_item in idx.meta:
-                    if "path" in meta_item:
-                        all_paths.add(meta_item["path"])
+            files = [Path(p) for p in paths_str if Path(p).exists()]
+            ingest_result = ingest_files(idx, files)
+            if hasattr(idx, 'save'):
+                idx.save()
+            response = {"status": "success", "result": ingest_result}
+            self._send_notification_to_researcher({"type": "notification", "event": "ingestion_complete", "details": ingest_result})
 
-                catalog = {}
-                ext_map = {
-                    ".py": "PYTHON_SRC",
-                    ".md": "MARKDOWN_DOCS",
-                    ".txt": "TEXT_FILES",
-                    ".json": "JSON_DATA",
-                    ".yaml": "CONFIG_FILES",
-                    ".yml": "CONFIG_FILES",
-                }
-
-                for path_str in sorted(list(all_paths)):
-                    p = Path(path_str)
-                    category = ext_map.get(p.suffix.lower(), "MISC")
-                    if category not in catalog:
-                        catalog[category] = {"count": 0, "files": []}
-                    
-                    catalog[category]["files"].append(path_str)
-                    catalog[category]["count"] += 1
-                
-                catalog_data = {"total_docs": len(all_paths), "card_catalog": catalog}
-
-            response = {
-                "status": "success",
-                "message": "Card catalog generated",
-                "result": catalog_data
-            }
-        
         self._log("Responding to IPC message", message_type=msg_type, response_status=response.get("status"))
         return response
+        
+    def _handle_client(self, conn, addr):
+        """Handle incoming client connection in a dedicated thread."""
+        self._log(f"Accepted new connection from {addr}")
+        try:
+            while self.running:
+                # Read message length
+                len_bytes = conn.recv(4)
+                if not len_bytes:
+                    break
+                msg_len = struct.unpack('!I', len_bytes)[0]
+
+                # Read message
+                msg_bytes = b''
+                while len(msg_bytes) < msg_len:
+                    chunk = conn.recv(msg_len - len(msg_bytes))
+                    if not chunk:
+                        raise ConnectionError("Client closed connection unexpectedly.")
+                    msg_bytes += chunk
+                
+                message = json.loads(msg_bytes.decode('utf-8'))
+                
+                # Process message and get response
+                response_data = self._handle_ipc_message(message)
+
+                # Send response
+                resp_json = json.dumps(response_data).encode('utf-8')
+                resp_len = struct.pack('!I', len(resp_json))
+                conn.sendall(resp_len + resp_json)
+
+                if message.get("type") == "shutdown":
+                    break
+        except (ConnectionResetError, ConnectionAbortedError):
+            self._log(f"Client {addr} disconnected.", level="warn")
+        except Exception as e:
+            self._log(f"Error handling client {addr}: {e}", level="error")
+        finally:
+            self._log(f"Closing connection from {addr}")
+            conn.close()
 
     def _perform_upkeep(self) -> None:
-        """Placeholder for RAG upkeep tasks."""
-        self._log("Performing upkeep")
-        # This will be detailed in 'Implement Librarian Upkeep and RAG Management Functions' task.
-
-    def _listen_for_ipc(self) -> None:
-        """Listens for and handles incoming Researcher connections and messages."""
-        if not self.listener:
-            return
-
-        conn = None
-        try:
-            # Use wait() to wait for a connection with a timeout
-            if wait([self.listener], 0.1):
-                conn = self.listener.accept()
-                self._log("Accepted new IPC connection")
-                msg = conn.recv()
-                response = self._handle_ipc_message(msg)
-                conn.send(response)
-        except EOFError:
-            self._log("IPC client disconnected unexpectedly", level="warn")
-        except Exception as e:
-            self._log("Error handling IPC connection", level="error", error=str(e))
-        finally:
-            if conn:
-                conn.close()
+        """Periodically sends a proactive message to the researcher."""
+        self._log("Performing upkeep and sending proactive message.")
+        last_ts = self.state.get("librarian_last_gap_ts", "")
+        gap_events = _read_recent_gap_events(last_ts)
+        for entry in gap_events:
+            data = entry.get("data", {})
+            topic = data.get("prompt", "")
+            note = {
+                "type": "notification",
+                "event": "rag_gap",
+                "details": {
+                    "note_id": _note_id(topic + entry.get("ts", "")),
+                    "prompt": topic,
+                    "score": data.get("top_score"),
+                    "suggestion": "Consider /librarian request <topic> or ingest more local sources.",
+                },
+            }
+            self._send_notification_to_researcher(note)
+            if self.cfg.get("auto_update", {}).get("sources_on_gap") and topic:
+                prompt = (
+                    "You are the Librarian agent collaborating with Martin. "
+                    "List 3-5 public sources (title + URL) to build a local RAG for this topic. "
+                    "Keep each source on its own line with a short description. "
+                    f"Topic: {topic}"
+                )
+                result = call_cloud(prompt=prompt, cmd_template=None)
+                sources = _parse_sources(result.output or "")
+                src_note = {
+                    "type": "notification",
+                    "event": "librarian_sources",
+                    "details": {
+                        "note_id": _note_id(topic + (result.output or "")),
+                        "topic": topic,
+                        "ok": result.ok,
+                        "hash": result.hash,
+                        "sources_text": (result.output or "")[:4000],
+                        "sources": sources,
+                        "error": result.error,
+                    },
+                }
+                self._send_notification_to_researcher(src_note)
+        if gap_events:
+            self.state["librarian_last_gap_ts"] = gap_events[-1].get("ts", last_ts)
+            try:
+                from researcher.state_manager import save_state
+                save_state(self.state)
+            except Exception:
+                pass
+        self._send_notification_to_researcher({
+            "type": "notification",
+            "event": "heartbeat",
+            "details": {"timestamp": time.time()}
+        })
+        self.last_upkeep_time = time.time()
 
     def run(self) -> None:
         """Main loop for the Librarian background process."""
         self._log("Librarian starting up.")
-        # _ensure_ipc_dirs() is handled by librarian_client for AF_UNIX socket parent dir
+        try:
+            self.sock.bind(self.address)
+            self.sock.listen(5)
+            self._log(f"Librarian listening on {self.address[0]}:{self.address[1]}")
+        except Exception as e:
+            self._log(f"Failed to bind/listen: {e}", level="error")
+            return
 
         while self.running:
             try:
-                self._listen_for_ipc() # Listen for messages
-
-                # Perform upkeep tasks periodically
-                if (time.time() - self.last_upkeep_time) >= LIBRARIAN_HEARTBEAT_INTERVAL_S:
-                    self._perform_upkeep()
-                    self.last_upkeep_time = time.time()
-                
-                # Heartbeat (logged by upkeep or if no upkeep, log here)
-                self._log("Heartbeat")
-                
-                # Small sleep if no messages or upkeep to avoid busy-waiting.
-                # sleep is implicit in listener.poll if no activity.
-                time.sleep(1)
-
+                # Use a timeout on accept to allow checking self.running
+                self.sock.settimeout(1.0)
+                conn, addr = self.sock.accept()
+                client_thread = threading.Thread(target=self._handle_client, args=(conn, addr))
+                client_thread.daemon = True
+                client_thread.start()
+            except socket.timeout:
+                continue # Go back to checking self.running
             except KeyboardInterrupt:
-                self._log("Librarian received KeyboardInterrupt, shutting down.")
                 self.running = False
             except Exception as e:
-                self._log("Librarian encountered an unhandled error in main loop", level="error", error=str(e))
-                # Consider if Librarian should crash or try to recover
-                self.running = False # For now, critical error causes shutdown
+                if self.running:
+                    self._log(f"Error accepting connections: {e}", level="error")
+                break
+            
+            if (time.time() - self.last_upkeep_time) >= LIBRARIAN_HEARTBEAT_INTERVAL_S:
+                self._perform_upkeep()
 
-        self._log("Librarian shutting down.")
+        self.sock.close()
+        self._log("Librarian shut down.")
 
 
-def start_librarian_process(address: Optional[Any] = None, debug_mode: bool = False) -> None:
+def start_librarian_process(debug_mode: bool = False) -> None:
     """Function to start the Librarian process."""
-    librarian = Librarian(address=address, debug_mode=debug_mode)
+    librarian = Librarian(debug_mode=debug_mode)
     librarian.run()
 
 if __name__ == "__main__":
-    # This block allows running the librarian directly for testing
     print("--- Starting Librarian (Debug Mode) ---")
     start_librarian_process(debug_mode=True)

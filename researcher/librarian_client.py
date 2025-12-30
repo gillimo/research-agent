@@ -1,79 +1,87 @@
 import os
 import time
 import json
+import socket
+import struct
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
-from multiprocessing.connection import Client, Listener # Using multiprocessing.connection for IPC
 
 from researcher.state_manager import ROOT_DIR
+from researcher import sanitize
 
 # --- IPC Configuration ---
-# For simplicity, using a file-based address for Unix domain socket or similar.
-# This path needs to be consistent between client and librarian.
-LIBRARIAN_IPC_ADDR = Path(os.getenv("LIBRARIAN_IPC_ADDR", ROOT_DIR / "ipc" / "librarian_socket"))
-# For Windows, this might default to a (host, port) tuple if using TCP.
-# For now, assuming Unix-like path for socket address.
-# A more robust solution would detect OS and choose accordingly.
-if os.name == 'nt': # Windows
-    LIBRARIAN_IPC_TYPE = 'AF_INET'
-    LIBRARIAN_IPC_HOST = 'localhost'
-    LIBRARIAN_IPC_PORT = int(os.getenv("LIBRARIAN_IPC_PORT", 6000))
-    LIBRARIAN_IPC_ADDR = (LIBRARIAN_IPC_HOST, LIBRARIAN_IPC_PORT)
-else: # Unix-like
-    LIBRARIAN_IPC_TYPE = 'AF_UNIX' # For Unix domain sockets
-    # Ensure the directory for the socket exists
-    LIBRARIAN_IPC_ADDR.parent.mkdir(parents=True, exist_ok=True)
-    LIBRARIAN_IPC_ADDR = str(LIBRARIAN_IPC_ADDR) # Convert Path to str for Listener/Client
+LIBRARIAN_HOST = os.getenv("LIBRARIAN_HOST", "127.0.0.1")
+LIBRARIAN_PORT = int(os.getenv("LIBRARIAN_PORT", 6000))
+LIBRARIAN_ADDR = (LIBRARIAN_HOST, LIBRARIAN_PORT)
 
-LIBRARIAN_IPC_TIMEOUT_S = int(os.getenv("LIBRARIAN_IPC_TIMEOUT_S", 10))
-LIBRARIAN_IPC_RETRIES = int(os.getenv("LIBRARIAN_IPC_RETRIES", 3))
-LIBRARIAN_IPC_RETRY_DELAY_S = float(os.getenv("LIBRARIAN_IPC_RETRY_DELAY_S", 0.5))
+LIBRARIAN_TIMEOUT_S = int(os.getenv("LIBRARIAN_TIMEOUT_S", 10))
+LIBRARIAN_RETRIES = int(os.getenv("LIBRARIAN_RETRIES", 3))
+LIBRARIAN_RETRY_DELAY_S = float(os.getenv("LIBRARIAN_RETRY_DELAY_S", 0.5))
 
 class LibrarianClient:
     """
-    Client for communicating with the background Librarian process via IPC.
+    Client for communicating with the background Librarian process via raw TCP sockets.
     """
-    def __init__(self, address: Any = None, authkey: bytes = b'librarian_secret') -> None:
-        self.address = address or LIBRARIAN_IPC_ADDR
-        self.authkey = authkey
-        self._conn: Optional[Client] = None
+    def __init__(self, address: Tuple[str, int] = None) -> None:
+        self.address = address or LIBRARIAN_ADDR
+        self._conn: Optional[socket.socket] = None
 
-    def _connect(self) -> Optional[Client]:
+    def _connect(self) -> bool:
         """Establishes a connection to the Librarian with retries."""
-        for attempt in range(LIBRARIAN_IPC_RETRIES):
+        if self._conn:
+            return True
+            
+        for attempt in range(LIBRARIAN_RETRIES):
             try:
-                # Listener/Client connection supports 'AF_UNIX' by passing a string path
-                # or 'AF_INET' (TCP) by passing a (host, port) tuple.
-                self._conn = Client(self.address, authkey=self.authkey)
-                return self._conn
-            except (FileNotFoundError, ConnectionRefusedError) as e:
-                print(f"LibrarianClient: Connection failed (attempt {attempt+1}/{LIBRARIAN_IPC_RETRIES}): {e}")
-                time.sleep(LIBRARIAN_IPC_RETRY_DELAY_S)
+                self._conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._conn.settimeout(LIBRARIAN_TIMEOUT_S)
+                self._conn.connect(self.address)
+                return True
+            except (ConnectionRefusedError, socket.timeout) as e:
+                print(f"LibrarianClient: Connection failed (attempt {attempt+1}/{LIBRARIAN_RETRIES}): {e}")
+                self._conn = None
+                time.sleep(LIBRARIAN_RETRY_DELAY_S)
             except Exception as e:
                 print(f"LibrarianClient: Unexpected error during connection: {e}")
-                return None
-        return None
+                self._conn = None
+                return False
+        return False
 
     def _send_receive(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Sends a message to the Librarian and waits for a response."""
-        if self._conn is None:
-            if not self._connect():
-                return {"status": "error", "message": "Failed to connect to Librarian."}
+        if not self._connect():
+            return {"status": "error", "message": "Failed to connect to Librarian."}
         
         try:
-            self._conn.send(message)
-            # Use poll to implement a timeout on receive
-            if self._conn.poll(LIBRARIAN_IPC_TIMEOUT_S):
-                response = self._conn.recv()
-                return response
-            else:
-                self._conn.close() # Close connection if timeout
-                self._conn = None
-                return {"status": "error", "message": "Librarian response timed out."}
+            # Encode message and prefix with its length (4-byte integer)
+            msg_json = json.dumps(message).encode('utf-8')
+            msg_len = struct.pack('!I', len(msg_json))
+            self._conn.sendall(msg_len + msg_json)
+
+            # Receive response length
+            resp_len_bytes = self._conn.recv(4)
+            if not resp_len_bytes:
+                raise ConnectionError("Librarian closed the connection.")
+            
+            resp_len = struct.unpack('!I', resp_len_bytes)[0]
+            
+            # Receive response data
+            response_bytes = b''
+            while len(response_bytes) < resp_len:
+                chunk = self._conn.recv(resp_len - len(response_bytes))
+                if not chunk:
+                    raise ConnectionError("Librarian closed the connection during response.")
+                response_bytes += chunk
+
+            return json.loads(response_bytes.decode('utf-8'))
+
+        except (socket.timeout, ConnectionError) as e:
+            print(f"LibrarianClient: Communication error: {e}")
+            self.close()
+            return {"status": "error", "message": f"Communication error: {e}"}
         except Exception as e:
-            print(f"LibrarianClient: Error during IPC communication: {e}")
-            self._conn.close() # Ensure connection is closed on error
-            self._conn = None
+            print(f"LibrarianClient: Unexpected error during IPC communication: {e}")
+            self.close()
             return {"status": "error", "message": f"IPC communication error: {e}"}
 
     def close(self) -> None:
@@ -84,9 +92,12 @@ class LibrarianClient:
 
     def query_cloud(self, prompt: str, cloud_mode: str, cloud_cmd: Optional[str] = None, cloud_threshold: Optional[float] = None) -> Dict[str, Any]:
         """Sends a request to the Librarian to query a cloud LLM."""
+        sanitized_prompt, changed = sanitize.sanitize_prompt(prompt or "")
         message = {
             "type": "cloud_query",
-            "prompt": prompt,
+            "prompt": sanitized_prompt,
+            "sanitized": True,
+            "changed": changed,
             "cloud_mode": cloud_mode,
             "cloud_cmd": cloud_cmd,
             "cloud_threshold": cloud_threshold
@@ -108,6 +119,33 @@ class LibrarianClient:
         }
         return self._send_receive(message)
 
+    def request_research(self, topic: str, intent: str = "rag_update") -> Dict[str, Any]:
+        """Ask the Librarian to research a topic and send back a note."""
+        message = {
+            "type": "research_request",
+            "topic": topic,
+            "intent": intent,
+        }
+        return self._send_receive(message)
+
+    def ingest_text(self, text: str, topic: str = "", source: str = "librarian_note") -> Dict[str, Any]:
+        """Send text content for the Librarian to ingest into the local RAG."""
+        message = {
+            "type": "ingest_text",
+            "text": text,
+            "topic": topic,
+            "source": source,
+        }
+        return self._send_receive(message)
+
+    def request_sources(self, topic: str) -> Dict[str, Any]:
+        """Ask the Librarian for public source suggestions for a topic."""
+        message = {
+            "type": "sources_request",
+            "topic": topic,
+        }
+        return self._send_receive(message)
+
     def get_status(self) -> Dict[str, Any]:
         """Requests status information from the Librarian."""
         message = {
@@ -121,17 +159,13 @@ class LibrarianClient:
             "type": "shutdown"
         }
         response = self._send_receive(message)
-        self.close() # Ensure client connection is closed after shutdown
+        self.close()
         return response
 
 if __name__ == "__main__":
     # Example usage for testing purposes
-    print("--- LibrarianClient Test ---")
+    print("--- LibrarianClient Test (Raw Socket) ---")
     
-    # Ensure LIBRARIAN_IPC_ADDR is set correctly for your OS
-    # For Unix-like: os.environ["LIBRARIAN_IPC_ADDR"] = "/tmp/librarian_socket"
-    # For Windows (TCP): os.environ["LIBRARIAN_IPC_PORT"] = "6000"
-
     client = LibrarianClient()
     
     try:
@@ -139,16 +173,6 @@ if __name__ == "__main__":
         print("\nRequesting Librarian status...")
         status_resp = client.get_status()
         print(f"Status Response: {status_resp}")
-
-        # Test cloud query (Librarian needs to be running and configured)
-        print("\nSending cloud query request...")
-        cloud_resp = client.query_cloud("What is the capital of France?", "auto")
-        print(f"Cloud Query Response: {cloud_resp}")
-
-        # Test ingestion request
-        print("\nSending ingestion request...")
-        ingest_resp = client.request_ingestion(["/tmp/test_doc.txt"])
-        print(f"Ingestion Response: {ingest_resp}")
 
     except Exception as e:
         print(f"An error occurred during client test: {e}")

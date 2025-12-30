@@ -60,6 +60,11 @@ def call_cloud(prompt: str, cmd_template: Optional[str] = None, logs_root: Optio
     Uses sanitized prompt and structured logging.
     """
     st = load_state() # Load state for logging
+    local_only = os.environ.get("RESEARCHER_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes"}
+    if local_only:
+        log_event(st, "cloud_call_blocked", reason="local_only", sanitized_prompt="[blocked]")
+        _append_cloud_log(logs_root, "cloud_call_blocked", redacted=True, sanitized="[blocked]")
+        return CloudCallResult(False, "", "blocked by local-only mode", 1, "[blocked]", True, _hash("[blocked]"))
 
     # Ensure logs_root exists if provided, and setup logger for cloud logs (still using old for now)
     # The cloud logger in llm_utils._post_responses will handle its own logging

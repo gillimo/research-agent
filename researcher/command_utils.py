@@ -15,6 +15,16 @@ HOME_DOTFILES = {".bashrc", ".profile", ".zshrc", ".ssh"}
 LIKELY_INTERACTIVE_HINTS = (" apt ", " apt-get ", " dpkg ", " raspi-config", " curl ", " bash ", " sh ",
                             " sudo apt ", " sudo apt-get ", " sudo dpkg ")
 
+# High-risk command fragments and path hints.
+_HIGH_RISK_FRAGMENTS = (
+    " rm -rf", " rm -r", " del /s", " del /f", " rmdir /s", " rd /s",
+    " format ", " diskpart", " mkfs", " dd if=", " shutdown", " reboot",
+    " stop-computer", " restart-computer", " bcdedit", " reg delete", " reg add",
+    " remove-item -recurse", " remove-item -force", " takeown", " icacls ",
+    " chmod 777", " chown ", " git reset --hard", " git clean -fd", " git checkout --",
+)
+_SYSTEM_PATH_HINTS = ("/etc/", "/boot/", "/usr/", "/lib/", "/var/", "c:\\windows", "c:\\program files")
+
 # --- Path utility ---
 def _norm(p: str) -> str:
     """Normalizes a path by expanding user, vars, and converting to absolute path."""
@@ -195,3 +205,45 @@ def preprocess_command(cmd: str) -> str:
         return sudo_prefix + core
     
     return trimmed
+
+
+def classify_command_risk(
+    cmd: str,
+    allowlist: Optional[list[str]] = None,
+    denylist: Optional[list[str]] = None
+) -> Dict[str, Any]:
+    """
+    Classifies command risk using heuristics and allow/deny lists.
+    Returns dict: level (low|medium|high|blocked) and reasons list.
+    """
+    reasons: list[str] = []
+    allowlist = [s.lower() for s in (allowlist or []) if s]
+    denylist = [s.lower() for s in (denylist or []) if s]
+    raw = cmd.strip()
+    lowered = f" {raw.lower()} "
+
+    for token in denylist:
+        if token and token in lowered:
+            return {"level": "blocked", "reasons": [f"denylist:{token}"]}
+
+    for token in allowlist:
+        if token and token in lowered:
+            return {"level": "low", "reasons": [f"allowlist:{token}"]}
+
+    for frag in _HIGH_RISK_FRAGMENTS:
+        if frag in lowered:
+            reasons.append(f"high-risk:{frag.strip()}")
+
+    for hint in _SYSTEM_PATH_HINTS:
+        if hint in lowered:
+            reasons.append(f"system-path:{hint}")
+
+    needs_overwrite, target, cls = needs_overwrite_confirmation(raw)
+    if needs_overwrite and target:
+        reasons.append(f"overwrite:{cls['zone']}")
+
+    if reasons:
+        level = "high" if any(r.startswith("high-risk") or r.startswith("system-path") for r in reasons) else "medium"
+        return {"level": level, "reasons": reasons}
+
+    return {"level": "low", "reasons": []}

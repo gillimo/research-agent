@@ -268,18 +268,23 @@ def _extract_paths(cmd: str) -> list[str]:
         tokens = cmd.split()
     paths = []
     for t in tokens:
-        if ":\\\\" in t or t.startswith("/") or t.startswith("~"):
-            paths.append(t.strip('"').strip("'"))
+        cleaned = t.strip('"').strip("'")
+        if ":\\" in cleaned or cleaned.startswith("/") or cleaned.startswith("~") or cleaned.startswith(".\\") or cleaned.startswith("./"):
+            paths.append(cleaned)
     return paths
 
 
 def _looks_like_write(cmd: str) -> bool:
     lowered = cmd.lower()
+    if re.search(r"(^|\s)\d*>+|(^|\s)\d*>&", lowered):
+        return True
     write_tokens = [
-        " > ", ">>", "tee ", "set-content", "out-file",
-        "del ", "erase ", "rm ", "rmdir", "mkdir",
-        "cp ", "copy ", "mv ", "move ",
-        "python -m pip install", "pip install",
+        " > ", ">>", "tee ", "set-content", "out-file", "add-content",
+        "del ", "erase ", "rm ", "rmdir", "mkdir", "md ",
+        "cp ", "copy ", "copy-item", "mv ", "move ", "move-item",
+        "remove-item", "new-item", "ni ",
+        "python -m pip install", "pip install", "npm install", "pnpm install",
+        "git add", "git commit", "git checkout -b", "git merge", "git reset", "git clean", "git stash",
     ]
     return any(t in lowered for t in write_tokens)
 
@@ -298,8 +303,11 @@ def enforce_sandbox(cmd: str, sandbox_mode: str, workspace: str) -> Tuple[bool, 
     # workspace-write: allow writes only under workspace
     try:
         ws = os.path.abspath(os.path.expanduser(workspace))
+        cwd = os.path.abspath(os.getcwd())
         paths = _extract_paths(cmd)
         if not paths:
+            if cwd.startswith(ws + os.sep) or cwd == ws:
+                return True, ""
             return False, "sandbox workspace-write: write path not detected"
         for p in paths:
             try:

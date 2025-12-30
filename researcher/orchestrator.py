@@ -1,6 +1,8 @@
+import hashlib
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -10,8 +12,11 @@ from researcher.command_utils import extract_commands
 from researcher.dev_flow import dev_flow
 from researcher.system_context import get_system_context
 from researcher.resource_registry import list_resources, read_resource
-from researcher.system_info import system_snapshot # New import
-from researcher.librarian_client import LibrarianClient # New import
+from researcher.system_info import system_snapshot
+from researcher.librarian_client import LibrarianClient
+from researcher.config_loader import load_config
+from researcher.index import FaissIndex
+from researcher.schemas import Response, ProvenanceEntry, Confidence
 
 # --- Constants (adapted from Martin) ---
 SHOW_TURN_BAR = True  # To be controlled by researcher's config/verbosity
@@ -155,6 +160,108 @@ def _ability_catalog_list(_: str) -> str:
         # Return the whole error response if status is not success
         return json.dumps(response, ensure_ascii=False, indent=2)
 
+
+def _ability_ask_query(payload: str) -> str:
+    """
+    Queries local RAG, and optionally the cloud, to answer a question.
+    This implements the core logic for the "ask" behavior with a cloud hop.
+    """
+    query = payload
+    config = load_config()
+    req_id = str(uuid.uuid4())
+
+    # --- 1. Query Local RAG ---
+    vs_config = config.get("vector_store", {})
+    embedding_model = config.get("embedding_model")
+    index_path = Path(vs_config.get("index_path"))
+
+    local_provenance = []
+    local_confidence = 0.0
+    answer = "No answer found."
+
+    if vs_config.get("type") == "faiss" and index_path.exists():
+        index = FaissIndex.load(model_name=embedding_model, index_path=index_path)
+        local_results = index.search(query, k=5)
+
+        if local_results:
+            top_score = local_results[0][0]
+            local_confidence = top_score
+            for score, meta in local_results:
+                provenance_entry = ProvenanceEntry(
+                    source="local",
+                    score=score,
+                    text=meta.get("text", ""),
+                    meta=meta,
+                )
+                local_provenance.append(provenance_entry)
+            answer = local_provenance[0].text # Use top result as answer for now
+
+    # --- 2. Decide on Cloud Hop ---
+    cloud_config = config.get("cloud", {})
+    auto_update_config = config.get("auto_update", {})
+    cloud_provenance = []
+    cloud_confidence = 0.0
+    
+    should_hop = (
+        cloud_config.get("enabled") and
+        cloud_config.get("trigger_on_low_confidence") and
+        local_confidence < cloud_config.get("low_confidence_threshold", 0.25)
+    )
+
+    if should_hop:
+        client = LibrarianClient()
+        try:
+            cloud_response = client.query_cloud(
+                prompt=query,
+                cloud_mode="auto" # or some other configured mode
+            )
+            if cloud_response.get("status") == "success":
+                cloud_result = cloud_response.get("result", {})
+                cloud_output = cloud_result.get("output", "")
+                if cloud_output:
+                    # For now, we'll treat the whole cloud output as one provenance entry
+                    cloud_provenance_entry = ProvenanceEntry(
+                        source="cloud",
+                        score=cloud_result.get("confidence", 0.8), # Use a fixed high confidence for cloud
+                        text=cloud_output,
+                        meta={
+                            "provider": cloud_result.get("provider"),
+                            "model": cloud_result.get("model"),
+                            "sanitized": cloud_result.get("sanitized"),
+                            "hash": cloud_result.get("hash"),
+                        }
+                    )
+                    cloud_provenance.append(cloud_provenance_entry)
+                    cloud_confidence = cloud_provenance_entry.score
+                    # If cloud has a good answer, it becomes the main answer
+                    answer = cloud_output
+
+                    # --- Ingest cloud answer back into RAG ---
+                    if auto_update_config.get("ingest_cloud_answers"):
+                        processed_path = Path(config.get("data_paths", {}).get("processed", "data/processed"))
+                        cloud_answers_path = processed_path / "cloud_answers"
+                        cloud_answers_path.mkdir(parents=True, exist_ok=True)
+                        
+                        content_hash = hashlib.sha256(cloud_output.encode("utf-8")).hexdigest()
+                        temp_file_path = cloud_answers_path / f"{content_hash}.txt"
+                        
+                        if not temp_file_path.exists():
+                            temp_file_path.write_text(cloud_output, encoding="utf-8")
+                            client.request_ingestion([str(temp_file_path)])
+        finally:
+            client.close()
+
+    # --- 3. Assemble Response ---
+    response = Response(
+        id=req_id,
+        answer=answer,
+        provenance={"local": local_provenance, "cloud": cloud_provenance},
+        confidence=Confidence(local=local_confidence, cloud=cloud_confidence),
+    )
+
+    return response.model_dump_json(indent=2)
+
+
 ABILITY_REGISTRY = {
     "env.check": _ability_env_check,
     "system.context": _ability_system_context,
@@ -164,6 +271,7 @@ ABILITY_REGISTRY = {
     "resource.list": _ability_resource_list,
     "resource.read": _ability_resource_read,
     "catalog.list": _ability_catalog_list,
+    "ask.query": _ability_ask_query,
 }
 
 

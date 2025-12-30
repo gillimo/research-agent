@@ -1,62 +1,58 @@
-import pytest
-import time
 import os
+import time
 import socket
 from multiprocessing import Process
 
-from researcher.librarian import Librarian
-from researcher.librarian_client import LibrarianClient, LIBRARIAN_IPC_TYPE, LIBRARIAN_IPC_HOST
+import pytest
 
-def find_free_port():
+
+def _find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
+        s.bind(("", 0))
         return s.getsockname()[1]
 
-# Helper function to run the librarian in a separate process
-def run_librarian(address):
-    librarian = Librarian(address=address, debug_mode=True)
+
+def _run_librarian(port: int):
+    os.environ["LIBRARIAN_HOST"] = "127.0.0.1"
+    os.environ["LIBRARIAN_PORT"] = str(port)
+    os.environ["RESEARCHER_CLOUD_API_KEY"] = ""
+    os.environ["OPENAI_API_KEY"] = ""
+    from researcher.librarian import Librarian
+    librarian = Librarian(debug_mode=False)
     librarian.run()
+
 
 @pytest.fixture(scope="module")
 def librarian_process():
-    # Determine the address based on the OS
-    if LIBRARIAN_IPC_TYPE == 'AF_INET':
-        port = find_free_port()
-        address = (LIBRARIAN_IPC_HOST, port)
-    else:
-        # For Unix-like systems, create a unique socket file path
-        socket_dir = "/tmp"
-        socket_file = f"librarian_test_{os.getpid()}.sock"
-        address = os.path.join(socket_dir, socket_file)
-
-    # Set up the librarian process
-    p = Process(target=run_librarian, args=(address,), daemon=True)
+    port = _find_free_port()
+    p = Process(target=_run_librarian, args=(port,), daemon=True)
     p.start()
-    # Give the librarian a moment to start up
     time.sleep(1)
-    yield address
-    # Clean up the librarian process
-    # Send a shutdown signal to the librarian
-    client = LibrarianClient(address=address)
+    yield ("127.0.0.1", port)
+    from researcher.librarian_client import LibrarianClient
+    client = LibrarianClient(address=("127.0.0.1", port))
     client.shutdown()
     p.join(timeout=2)
     if p.is_alive():
         p.terminate()
 
-    # Clean up the socket file if it exists
-    if LIBRARIAN_IPC_TYPE == 'AF_UNIX' and os.path.exists(address):
-        os.remove(address)
-
 
 def test_librarian_ipc_status(librarian_process):
-    """
-    Tests that the LibrarianClient can connect to the Librarian and get a status response.
-    """
     address = librarian_process
+    from researcher.librarian_client import LibrarianClient
     client = LibrarianClient(address=address)
     response = client.get_status()
     client.close()
-
     assert response is not None
     assert response.get("status") == "success"
-    assert "Librarian is running" in response.get("message", "")
+
+
+def test_librarian_research_request(librarian_process):
+    address = librarian_process
+    from researcher.librarian_client import LibrarianClient
+    client = LibrarianClient(address=address)
+    response = client.request_research("python pathlib basics")
+    client.close()
+    assert response is not None
+    assert "status" in response
+    assert "result" in response

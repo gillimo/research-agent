@@ -38,9 +38,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "give me a better answer", "not good enough",
         ],
     },
+    "local_only": False,
     "auto_update": {
         "ingest_threshold": 0.1,
         "ingest_cloud_answers": False,
+        "sources_on_gap": False,
     },
     "rephraser": {
         "enabled": False,
@@ -48,14 +50,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "execution": {
         "approval_policy": "on-request",  # on-request|on-failure|never
         "sandbox_mode": "workspace-write",  # read-only|workspace-write|full
+        "command_allowlist": [],
+        "command_denylist": [],
     },
     "context": {
         "auto": False,
         "max_recent": 10,
     },
+    "socket_server": {
+        "host": "127.0.0.1",
+        "port": 6001,
+    },
 }
 
-_NESTED_KEYS = ("vector_store", "data_paths", "cloud", "execution", "context", "auto_update", "rephraser")
+_NESTED_KEYS = ("vector_store", "data_paths", "cloud", "execution", "context", "auto_update", "rephraser", "socket_server")
 
 
 def _merge_config(base: Dict[str, Any], loaded: Dict[str, Any]) -> Dict[str, Any]:
@@ -119,11 +127,15 @@ def load_config(path: Path = Path("config/local.yaml")) -> Dict[str, Any]:
         cfg = _merge_config(DEFAULT_CONFIG, loaded)
         cfg = _normalize_paths(cfg, root)
         ensure_dirs(cfg)
+        if cfg.get("local_only"):
+            os.environ["RESEARCHER_LOCAL_ONLY"] = "1"
         return cfg
     except Exception:
         cfg = DEFAULT_CONFIG.copy()
         cfg = _normalize_paths(cfg, root)
         ensure_dirs(cfg)
+        if cfg.get("local_only"):
+            os.environ["RESEARCHER_LOCAL_ONLY"] = "1"
         return cfg
 
 

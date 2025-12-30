@@ -19,12 +19,14 @@ from researcher.answer import compose_answer
 # Removed: from researcher.martin_behaviors import sanitize_and_extract, run_plan
 from researcher.supervisor import nudge_message
 from researcher.local_llm import run_ollama_chat
+from researcher import chat_ui
 
 # New imports for Librarian client
 from researcher.librarian_client import LibrarianClient
+from researcher.socket_server import SocketServer
 
 # New imports for Martin's main loop
-from researcher.state_manager import load_state, save_state, log_event, SessionCtx, ROOT_DIR
+from researcher.state_manager import load_state, save_state, log_event, SessionCtx, ROOT_DIR, LEDGER_FILE
 from researcher import __version__
 
 _ASK_CACHE = {}
@@ -91,6 +93,7 @@ def get_status_payload(cfg, force_simple: bool = False) -> Dict[str, Any]:
             "ledger_entries": st.get("ledger", {}).get("entries"),
             "workspace_path": st.get("workspace", {}).get("path"),
         },
+        "local_only": bool(cfg.get("local_only")),
     }
 
 def should_cloud_hop(cloud_mode: str, top_score: float, threshold: float) -> bool:
@@ -160,6 +163,7 @@ def cmd_status(cfg, force_simple: bool = False, as_json: bool = False) -> int:
     state_table.add_row("last_session_start", str(state.get("last_session_start")))
     state_table.add_row("ledger_entries", str(state.get("ledger_entries")))
     state_table.add_row("workspace_path", str(state.get("workspace_path")))
+    state_table.add_row("local_only", str(payload.get("local_only")))
     console.print(state_table)
     return 0
 
@@ -229,6 +233,12 @@ def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional
             errors = result_data.get("errors", [])
             
             log_event(st, "ingest_command", files_count=len(paths), errors_count=len(errors), idx_type="via_librarian")
+            try:
+                st = load_state()
+                st["last_ingest"] = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "count": ingested_count, "mode": "via_librarian"}
+                save_state(st)
+            except Exception:
+                pass
             for err in errors:
                 print(f"error: {err}", file=sys.stderr)
             if as_json:
@@ -248,6 +258,12 @@ def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional
     if hasattr(idx, "save"):
         idx.save()
     log_event(st, "ingest_command_fallback", files_count=len(files), errors_count=len(local_result.get("errors", [])), idx_type="local")
+    try:
+        st = load_state()
+        st["last_ingest"] = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "count": local_result.get("ingested", 0), "mode": "local"}
+        save_state(st)
+    except Exception:
+        pass
     if as_json:
         print(json.dumps({"ok": True, "mode": "local_fallback", "ingested": local_result.get("ingested", 0), "errors": local_result.get("errors", [])}, ensure_ascii=False))
     else:
@@ -321,6 +337,10 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
     hits = idx.search(sanitized, k=k)
     top_score = max([h[0] for h in hits], default=0.0)
     log_event(st, "ask_command", k=k, hits_count=len(hits), top_score=top_score, sanitized=changed) # Use state_manager's log_event
+    gap_threshold = cfg.get("auto_update", {}).get("ingest_threshold", 0.1)
+    if top_score < gap_threshold:
+        sanitized_prompt, changed_gap = sanitize.sanitize_prompt(prompt or "")
+        log_event(st, "rag_gap", top_score=top_score, prompt=sanitized_prompt, sanitized=changed_gap)
     answer = compose_answer(hits)
     cloud_hits = []
     # Variable to track if a cloud answer was suggested for ingestion
@@ -344,14 +364,16 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
 
     # Optional cloud hop
     cloud_cfg = cfg.get("cloud", {}) or {}
+    local_only = bool(cfg.get("local_only")) or os.environ.get("RESEARCHER_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes"}
     effective_cloud_cmd = cloud_cmd or cloud_cfg.get("cmd_template") or os.environ.get("CLOUD_CMD", "")
     threshold = cloud_threshold if cloud_threshold is not None else cloud_cfg.get("trigger_score", 0.0)
     should_cloud = should_cloud_hop(cloud_mode, top_score, threshold)
-    if should_cloud:
+    if should_cloud and not local_only:
         from researcher.cloud_bridge import _hash
         client = LibrarianClient()
+        sanitized_prompt, changed_cloud = sanitize.sanitize_prompt(prompt or "")
         cloud_resp = client.query_cloud(
-            prompt=prompt,
+            prompt=sanitized_prompt,
             cloud_mode=cloud_mode,
             cloud_cmd=effective_cloud_cmd,
             cloud_threshold=cloud_threshold # Pass for context, though Librarian handles thresholding
@@ -379,7 +401,7 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
             result_changed = changed
             result_hash = _hash(sanitized) # Re-hash for logging consistency if error
 
-        log_event(st, "ask_cloud_hop", cloud_mode=cloud_mode, rc=result_rc, redacted=result_changed, trigger_score=top_score, threshold=threshold, librarian_response_status=cloud_resp.get("status")) # Use state_manager's log_event
+        log_event(st, "ask_cloud_hop", cloud_mode=cloud_mode, rc=result_rc, redacted=(result_changed or changed_cloud), trigger_score=top_score, threshold=threshold, librarian_response_status=cloud_resp.get("status")) # Use state_manager's log_event
         if result_ok and result_output:
             cloud_hits.append((0.0, {"path": "cloud", "chunk": result_output}))
             # --- Auto-update trigger: Ingest successful cloud answer ---
@@ -402,6 +424,8 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
                     log_event(st, "ingest_cloud_answer_skipped", reason="empty_chunks", cloud_output_hash=_hash(result_output))
         elif result_error:
             print(f"[cloud] {result_error}", file=sys.stderr)
+    elif cloud_mode != "off" and local_only:
+        log_event(st, "ask_cloud_hop_blocked", reason="local_only", cloud_mode=cloud_mode)
     elif cloud_mode != "off":
         from researcher.cloud_bridge import _hash
         log_event(st, "ask_cloud_hop_skipped", cloud_mode=cloud_mode, skipped_reason="threshold", trigger_score=top_score, threshold=threshold)
@@ -458,706 +482,1327 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
 # New cmd_chat function
 def cmd_chat(cfg, args) -> int:
     from tqdm import tqdm
-    from researcher.command_utils import extract_commands
+    from researcher.command_utils import extract_commands, classify_command_risk
     from researcher.llm_utils import _post_responses, _extract_output_text, MODEL_MAIN, interaction_history, diagnose_failure, current_username, rephraser
     from researcher.orchestrator import decide_next_step, dispatch_internal_ability
     from researcher.resource_registry import list_resources, read_resource
-    from researcher.runner import run_command_smart, enforce_sandbox
+    from researcher.runner import run_command_smart_capture, enforce_sandbox
     from researcher.librarian_client import LibrarianClient
     from researcher.system_context import get_system_context
+    from researcher.tool_ledger import append_tool_entry, read_recent, export_json
     import shlex
-    st = load_state()
-    sess = SessionCtx(st)
-    sess.begin()
-    logger = _get_cli_logger(cfg)
-    logger.info("chat_start")
-    last_user_request = ""
-    agent_mode = False
-    cloud_enabled = bool(cfg.get("cloud", {}).get("enabled"))
-    approval_policy = (cfg.get("execution", {}).get("approval_policy") or "on-request").lower()
-    sandbox_mode = (cfg.get("execution", {}).get("sandbox_mode") or "workspace-write").lower()
-    session_transcript = []
-    context_cache = {}
-    # Load persisted memory (best-effort).
-    mem = st.get("memory", {}) if isinstance(st, dict) else {}
-    if isinstance(mem, dict):
-        global _LAST_PATH, _LAST_LISTING
-        _LAST_PATH = mem.get("last_path", "") or _LAST_PATH
-        _LAST_LISTING = mem.get("last_listing", []) or _LAST_LISTING
-    if isinstance(st, dict):
-        cached_context = st.get("context_cache")
-        if isinstance(cached_context, dict):
-            context_cache = cached_context
 
-    transcript = []
-    print("\nmartin: Welcome! Type 'quit' to exit.")
-    def _setup_readline():
+    def _handle_librarian_notification(message: Dict[str, Any]) -> None:
         try:
-            import readline
-        except Exception:
-            return None
-        commands = [
-            "/help", "/clear", "/status", "/memory", "/context", "/plan", "/outputs", "/abilities", "/resources", "/resource", "/tests",
-            "/agent", "/cloud", "/ask", "/ingest", "/compress", "/signoff", "/exit", "/catalog",
-        ]
-        def completer(text, state):
-            buffer = readline.get_line_buffer()
-            if buffer.startswith("/"):
-                matches = [c for c in commands if c.startswith(buffer)]
-                if state < len(matches):
-                    return matches[state]
-            return None
-        readline.set_completer(completer)
-        try:
-            readline.parse_and_bind("tab: complete")
+            st = load_state()
+            inbox = st.get("librarian_inbox", [])
+            if not isinstance(inbox, list):
+                inbox = []
+            inbox.append({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "message": message,
+            })
+            st["librarian_inbox"] = inbox[-50:]
+            st["librarian_unread"] = True
+            save_state(st)
         except Exception:
             pass
-        return readline
-    _setup_readline()
+    # Start the socket server
+    socket_server_cfg = cfg.get("socket_server", {})
+    server = SocketServer(
+        host=socket_server_cfg.get("host"),
+        port=socket_server_cfg.get("port"),
+        handler=_handle_librarian_notification
+    )
+    server.start()
+
     try:
-        if cfg.get("vector_store", {}).get("warm_on_start"):
-            _load_index(cfg)
-    except Exception:
-        pass
-    try:
-        if cfg.get("context", {}).get("auto"):
-            from researcher.context_harvest import gather_context
-            context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
-            st = load_state()
-            st["context_cache"] = context_cache
-            save_state(st)
-    except Exception:
-        pass
-
-    should_exit = False
-    while True:
-        try:
-            user_input = input("\033[94mYou:\033[0m ")
-        except (EOFError, KeyboardInterrupt):
-            print("\n\033[92mmartin: Farewell.\033[0m")
-            logger.info("chat_end reason=interrupt")
-            break
-
-        if user_input.lower() in ('quit', 'exit'):
-            print("\033[92mmartin: Goodbye!\033[0m")
-            logger.info("chat_end reason=quit")
-            break
-        logger.info("chat_input len=%d", len(user_input))
-
-        def _is_disagreement(text: str) -> bool:
-            phrases = cfg.get("cloud", {}).get("disagreement_phrases", []) or []
-            lowered = text.strip().lower()
-            if not lowered:
+        st = load_state()
+        sess = SessionCtx(st)
+        sess.begin()
+        logger = _get_cli_logger(cfg)
+        logger.info("chat_start")
+        last_user_request = ""
+        agent_mode = False
+        cloud_enabled = bool(cfg.get("cloud", {}).get("enabled"))
+        if cfg.get("local_only"):
+            cloud_enabled = False
+        exec_cfg = cfg.get("execution", {}) or {}
+        approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
+        sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
+        command_allowlist = exec_cfg.get("command_allowlist") or []
+        command_denylist = exec_cfg.get("command_denylist") or []
+        def _maybe_override_sandbox(block_reason: str) -> bool:
+            if approval_policy == "never":
                 return False
-            return any(p in lowered for p in phrases)
+            try:
+                resp = input(f"\033[93mmartin: Sandbox blocked this command ({block_reason}). Override once? (yes/no)\033[0m ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                resp = "no"
+            return resp == "yes"
+        session_transcript = []
+        slash_commands = chat_ui.get_slash_commands()
+        command_descriptions = chat_ui.get_command_descriptions()
+        context_cache = {}
+        # Load persisted memory (best-effort).
+        mem = st.get("memory", {}) if isinstance(st, dict) else {}
+        if isinstance(mem, dict):
+            global _LAST_PATH, _LAST_LISTING
+            _LAST_PATH = mem.get("last_path", "") or _LAST_PATH
+            _LAST_LISTING = mem.get("last_listing", []) or _LAST_LISTING
+        if isinstance(st, dict):
+            cached_context = st.get("context_cache")
+            if isinstance(cached_context, dict):
+                context_cache = cached_context
 
-        def _handle_slash(cmd: str) -> bool:
-            nonlocal agent_mode, cloud_enabled, transcript, should_exit
-            if not cmd.startswith("/"):
-                return False
-            parts = shlex.split(cmd)
-            if not parts:
-                return True
-            name = parts[0].lstrip("/").lower()
-            args = parts[1:]
-            if name == "":
-                name = "help"
-            if name in ("exit", "quit"):
-                print("\033[92mmartin: Goodbye!\033[0m")
-                logger.info("chat_end reason=slash_exit")
-                should_exit = True
-                return True
-            if name == "help":
-                print("Commands: /help, /clear, /status, /memory, /context, /plan, /outputs, /abilities, /resources, /resource <path>, /tests, /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
-                return True
-            if name == "clear":
-                transcript = []
-                interaction_history.clear()
-                print("martin: Cleared transcript.")
-                return True
-            if name == "compress":
-                if not transcript:
-                    print("martin: No transcript to compress.")
-                    return True
-                summary = rephraser("\n".join(transcript)[-4000:])
-                print("martin: Compressed summary:")
-                print(summary)
-                return True
-            if name == "signoff":
-                if transcript:
-                    summary = rephraser("\n".join(transcript)[-4000:])
-                else:
-                    summary = "No transcript captured."
-                print("martin: Signoff")
-                print(summary)
-                print("martin: Session complete. Anything else?")
-                return True
-            if name == "status":
-                payload = get_status_payload(cfg, force_simple=False)
-                print(json.dumps(payload, ensure_ascii=False))
-                return True
-            if name == "memory":
-                st = load_state()
-                payload = {
-                    "memory": st.get("memory", {}),
-                    "history": st.get("memory_history", []),
-                    "session_memory": st.get("session_memory", {}),
-                    "session_history": st.get("session_history", []),
-                }
-                print(json.dumps(payload, ensure_ascii=False, indent=2))
-                return True
-            if name == "plan":
-                st = load_state()
-                payload = st.get("last_plan", {})
-                print(json.dumps(payload, ensure_ascii=False, indent=2))
-                return True
-            if name == "outputs":
+        transcript = []
+        def _apply_resume_snapshot(snapshot: Dict[str, Any]) -> None:
+            if not isinstance(snapshot, dict):
+                return
+            global _LAST_PATH, _LAST_LISTING
+            _LAST_PATH = snapshot.get("last_path", _LAST_PATH) or _LAST_PATH
+            _LAST_LISTING = snapshot.get("last_listing", _LAST_LISTING) or _LAST_LISTING
+            if isinstance(snapshot.get("context_cache"), dict):
+                context_cache.update(snapshot.get("context_cache") or {})
+            if "last_plan" in snapshot:
                 try:
-                    files = sorted(_OUTPUT_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
-                    for p in files:
-                        print(str(p))
-                except Exception:
-                    print("martin: No outputs found.")
-                return True
-            if name == "abilities":
-                try:
-                    from researcher.orchestrator import ABILITY_REGISTRY
-                    payload = {"abilities": sorted(list(ABILITY_REGISTRY.keys()))}
-                    print(json.dumps(payload, ensure_ascii=False, indent=2))
-                except Exception:
-                    print("martin: Unable to load abilities.")
-                return True
-            if name == "resources":
-                payload = list_resources()
-                print(json.dumps({"root": str(ROOT_DIR), "items": payload}, ensure_ascii=False, indent=2))
-                return True
-            if name == "resource":
-                if not args:
-                    print("martin: Provide a resource path.")
-                    return True
-                path = " ".join(args)
-                ok, result = read_resource(path)
-                result["ok"] = ok
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-                return True
-            if name == "tests":
-                try:
-                    cmds = []
-                    root = Path.cwd()
-                    if (root / "tests").exists():
-                        cmds.append("python -m pytest")
-                    if (root / "pyproject.toml").exists():
-                        cmds.append("python -m pytest -q")
-                    if (root / "scripts").exists() and (root / "scripts" / "ingest_demo.py").exists():
-                        cmds.append("python scripts/ingest_demo.py --simple-index")
-                    if not cmds:
-                        print("martin: No test helpers detected in this folder.")
-                        return True
-                    print("martin: Suggested test/run commands:")
-                    for c in cmds:
-                        print(f"- {c}")
-                except Exception:
-                    print("martin: Unable to suggest tests here.")
-                return True
-            if name == "catalog":
-                print("martin: Fetching card catalog from Librarian...")
-                # Use the same dispatcher as the main loop
-                ok, output = dispatch_internal_ability("catalog.list", "")
-                if ok:
-                    print(output)
-                else:
-                    print(f"martin: Error fetching catalog: {output}")
-                return True
-            if name == "context":
-                if not context_cache:
-                    from researcher.context_harvest import gather_context
-                    context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
                     st = load_state()
-                    st["context_cache"] = context_cache
+                    st["last_plan"] = snapshot.get("last_plan") or st.get("last_plan")
                     save_state(st)
-                payload = context_cache
-                print(json.dumps(payload, ensure_ascii=False, indent=2))
-                return True
-            if name == "agent":
-                if not args:
-                    print(f"martin: agent_mode={'on' if agent_mode else 'off'}")
-                    return True
-                if args[0].lower() == "on":
-                    agent_mode = True
-                    print("martin: Agent mode ON.")
-                    return True
-                if args[0].lower() == "off":
-                    agent_mode = False
-                    print("martin: Agent mode OFF.")
-                    return True
-                if args[0].lower() == "status":
-                    print(f"martin: agent_mode={'on' if agent_mode else 'off'}")
-                    return True
-            if name == "cloud":
-                if not args:
-                    print(f"martin: cloud={'on' if cloud_enabled else 'off'}")
-                    return True
-                if args[0].lower() == "on":
-                    cloud_enabled = True
-                    print("martin: Cloud ON.")
-                    return True
-                if args[0].lower() == "off":
-                    cloud_enabled = False
-                    print("martin: Cloud OFF.")
-                    return True
-            if name == "ask":
-                prompt = " ".join(args).strip()
-                if not prompt:
-                    print("martin: Provide a question.")
-                    return True
-                cmd_ask(cfg, prompt, k=5, use_llm=False, cloud_mode="off", force_simple=False, as_json=False)
-                return True
-            if name == "ingest":
-                if not args:
-                    print("martin: Provide a path to ingest.")
-                    return True
-                text = " ".join(args).lower()
-                ctx = get_system_context()
-                base = ""
-                if "onedrive" in text and "desktop" in text:
-                    base = ctx.get("paths", {}).get("onedrive_desktop") or ""
-                elif "desktop" in text:
-                    base = ctx.get("paths", {}).get("desktop") or ""
-                if base and ("research agent" in text or "research_agent" in text):
-                    target = str(Path(base) / "research_agent")
-                    cmd_ingest(cfg, [target], force_simple=False, as_json=False, skip_librarian=True)
-                    return True
-                if base:
-                    cmd_ingest(cfg, [base], force_simple=False, as_json=False, skip_librarian=True)
-                    return True
-                cmd_ingest(cfg, args, force_simple=False, as_json=False, skip_librarian=True)
-                return True
-            print("martin: Unknown command. Use /help.")
-            return True
+                except Exception:
+                    pass
+        snapshot = None
+        try:
+            snapshot = st.get("resume_snapshot")
+        except Exception:
+            snapshot = None
+        if snapshot:
+            _apply_resume_snapshot(snapshot)
+            print(f"\nmartin: Resumed previous session from {snapshot.get('ts', 'unknown')}.")
+        else:
+            print("\nmartin: Welcome! Type 'quit' to exit.")
+        try:
+            if not context_cache:
+                from researcher.context_harvest import gather_context
+                context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                st = load_state()
+                st["context_cache"] = context_cache
+                save_state(st)
+            chat_ui.print_context_summary(context_cache)
+        except Exception:
+            pass
+        readline_mod = None
+        history_path = None
+        readline_mod, history_path = chat_ui.setup_readline(cfg, slash_commands)
+        try:
+            if cfg.get("vector_store", {}).get("warm_on_start"):
+                _load_index(cfg)
+        except Exception:
+            pass
+        try:
+            if cfg.get("context", {}).get("auto"):
+                from researcher.context_harvest import gather_context
+                context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                st = load_state()
+                st["context_cache"] = context_cache
+                save_state(st)
+        except Exception:
+            pass
 
-        if user_input.strip().startswith("/"):
-            if _handle_slash(user_input.strip()):
-                if should_exit:
-                    break
-                continue
+        should_exit = False
+        try:
+            if cfg.get("local_only") and (os.environ.get("RESEARCHER_CLOUD_API_KEY") or os.environ.get("OPENAI_API_KEY")):
+                print("\033[93mmartin: local-only mode is ON; cloud credentials are present but will be ignored.\033[0m")
+        except Exception:
+            pass
+        while True:
+            try:
+                st = load_state()
+                if st.get("librarian_unread"):
+                    print("\033[92mmartin: Librarian has updates. Use /librarian inbox.\033[0m")
+                    st["librarian_unread"] = False
+                    save_state(st)
+                tasks = st.get("tasks", [])
+                if tasks and not st.get("tasks_prompted"):
+                    print(f"\033[92mmartin: Next task: {tasks[0].get('text','')}\033[0m")
+                    st["tasks_prompted"] = True
+                    save_state(st)
+            except Exception:
+                pass
+            try:
+                user_input = input("\033[94mYou:\033[0m ")
+            except (EOFError, KeyboardInterrupt):
+                print("\n\033[92mmartin: Farewell.\033[0m")
+                logger.info("chat_end reason=interrupt")
+                break
 
-        if cloud_enabled and cfg.get("cloud", {}).get("trigger_on_disagreement") and _is_disagreement(user_input):
-            prompt = (last_user_request or user_input).strip()
-            prompt = f"{prompt}\n\nUser feedback: {user_input}\nPlease answer correctly."
-            client = LibrarianClient()
-            cloud_resp = client.query_cloud(
-                prompt=prompt,
-                cloud_mode="always",
-                cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
-            )
-            client.close()
-            if cloud_resp.get("status") == "success":
-                result = cloud_resp.get("result", {})
-                output = result.get("output", "")
-                if output:
-                    print(f"\033[92mmartin:\n{output}\033[0m")
-                    transcript.append("martin: " + output)
-                    interaction_history.append("martin: " + output)
+            if user_input.lower() in ('quit', 'exit'):
+                print("\033[92mmartin: Goodbye!\033[0m")
+                logger.info("chat_end reason=quit")
+                break
+            logger.info("chat_input len=%d", len(user_input))
+
+            def _is_disagreement(text: str) -> bool:
+                phrases = cfg.get("cloud", {}).get("disagreement_phrases", []) or []
+                lowered = text.strip().lower()
+                if not lowered:
+                    return False
+                return any(p in lowered for p in phrases)
+
+            def _handle_slash(cmd: str) -> bool:
+                nonlocal agent_mode, cloud_enabled, transcript, should_exit
+                if not cmd.startswith("/"):
+                    return False
+                parts = shlex.split(cmd)
+                if not parts:
+                    return True
+                name = parts[0].lstrip("/").lower()
+                args = parts[1:]
+                if name == "":
+                    name = "help"
+                if name in ("exit", "quit"):
+                    print("\033[92mmartin: Goodbye!\033[0m")
+                    logger.info("chat_end reason=slash_exit")
+                    should_exit = True
+                    return True
+                if name == "help":
+                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /context [refresh], /plan, /outputs [ledger|export <path>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
+                    return True
+                if name == "clear":
+                    transcript = []
+                    interaction_history.clear()
+                    print("martin: Cleared transcript.")
+                    return True
+                if name == "compress":
+                    if not transcript:
+                        print("martin: No transcript to compress.")
+                        return True
+                    summary = rephraser("\n".join(transcript)[-4000:])
+                    print("martin: Compressed summary:")
+                    print(summary)
+                    return True
+                if name == "signoff":
+                    if transcript:
+                        summary = rephraser("\n".join(transcript)[-4000:])
+                    else:
+                        summary = "No transcript captured."
+                    print("martin: Signoff")
+                    print(summary)
+                    print("martin: Session complete. Anything else?")
+                    return True
+                if name == "status":
+                    payload = get_status_payload(cfg, force_simple=False)
+                    print(json.dumps(payload, ensure_ascii=False))
+                    return True
+                if name == "memory":
+                    st = load_state()
+                    payload = {
+                        "memory": st.get("memory", {}),
+                        "history": st.get("memory_history", []),
+                        "session_memory": st.get("session_memory", {}),
+                        "session_history": st.get("session_history", []),
+                    }
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return True
+                if name == "history":
+                    picked = chat_ui.handle_history_command(args, session_transcript, readline_mod, history_path)
+                    if picked:
+                        last_user_request = picked
+                    return True
+                if name == "palette":
+                    query = " ".join(args).strip().lower()
+                    chat_ui.render_palette(query, slash_commands, command_descriptions, session_transcript)
+                    return True
+                if name == "plan":
+                    st = load_state()
+                    payload = st.get("last_plan", {})
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return True
+                if name == "outputs":
+                    if args and args[0] == "ledger":
+                        filters: Dict[str, Any] = {}
+                        for tok in args[1:]:
+                            if tok.startswith("--rc="):
+                                try:
+                                    filters["rc"] = int(tok.split("=", 1)[1])
+                                except Exception:
+                                    pass
+                            elif tok.startswith("--rc!="):
+                                try:
+                                    filters["rc_not"] = int(tok.split("!=", 1)[1])
+                                except Exception:
+                                    pass
+                            elif tok.startswith("--risk="):
+                                filters["risk"] = tok.split("=", 1)[1]
+                            elif tok.startswith("--cwd="):
+                                filters["cwd"] = tok.split("=", 1)[1]
+                            elif tok.startswith("--text="):
+                                filters["text"] = tok.split("=", 1)[1]
+                            elif tok.startswith("--since="):
+                                val = tok.split("=", 1)[1]
+                                unit = val[-1:]
+                                try:
+                                    num = int(val[:-1])
+                                    seconds = num
+                                    if unit == "h":
+                                        seconds = num * 3600
+                                    elif unit == "m":
+                                        seconds = num * 60
+                                    elif unit == "s":
+                                        seconds = num
+                                    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - seconds))
+                                    filters["since"] = ts
+                                except Exception:
+                                    pass
+                        rows = read_recent(limit=10, filters=filters)
+                        if not rows:
+                            print("martin: Tool ledger is empty.")
+                            return True
+                        for row in rows:
+                            entry = row.get("entry", {})
+                            cmd = entry.get("command", "")
+                            ts = entry.get("ts", "")
+                            rc = entry.get("rc", "")
+                            print(f"{ts} rc={rc} cmd={cmd}")
+                        return True
+                    if args and args[0] == "export":
+                        out_path = args[1] if len(args) > 1 else str(Path("logs") / "tool_ledger_export.json")
+                        try:
+                            out = export_json(Path(out_path))
+                            print(f"martin: Exported tool ledger to {out}")
+                        except Exception as e:
+                            print(f"martin: Export failed ({e})")
+                        return True
+                    try:
+                        files = sorted(_OUTPUT_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+                        for p in files:
+                            print(str(p))
+                    except Exception:
+                        print("martin: No outputs found.")
+                    return True
+                if name == "resume":
+                    snapshot = None
+                    try:
+                        st = load_state()
+                        snapshot = st.get("resume_snapshot")
+                    except Exception:
+                        snapshot = None
+                    if not snapshot:
+                        print("martin: No resume snapshot found.")
+                        return True
+                    _apply_resume_snapshot(snapshot)
+                    print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+                    return True
+                if name == "abilities":
+                    try:
+                        from researcher.orchestrator import ABILITY_REGISTRY
+                        payload = {"abilities": sorted(list(ABILITY_REGISTRY.keys()))}
+                        print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    except Exception:
+                        print("martin: Unable to load abilities.")
+                    return True
+                if name == "resources":
+                    payload = list_resources()
+                    print(json.dumps({"root": str(ROOT_DIR), "items": payload}, ensure_ascii=False, indent=2))
+                    return True
+                if name == "resource":
+                    if not args:
+                        print("martin: Provide a resource path.")
+                        return True
+                    path = " ".join(args)
+                    ok, result = read_resource(path)
+                    result["ok"] = ok
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                    return True
+                if name == "tests":
+                    try:
+                        from researcher.test_helpers import suggest_test_commands
+                        cmds = suggest_test_commands(Path.cwd())
+                        if not cmds:
+                            print("martin: No test helpers detected in this folder.")
+                            return True
+                        print("martin: Suggested test/run commands:")
+                        for c in cmds:
+                            print(f"- {c}")
+                    except Exception:
+                        print("martin: Unable to suggest tests here.")
+                    return True
+                if name == "tasks":
+                    st = load_state()
+                    tasks = st.get("tasks", [])
+                    if not args:
+                        print("martin: Use /tasks add <text>, /tasks list, or /tasks done <n>.")
+                        return True
+                    action = args[0].lower()
+                    if action == "list":
+                        if not tasks:
+                            print("martin: No open tasks.")
+                            return True
+                        for idx, t in enumerate(tasks, 1):
+                            print(f"{idx}. {t.get('text','')}")
+                        return True
+                    if action == "add":
+                        text = " ".join(args[1:]).strip()
+                        if not text:
+                            print("martin: Provide task text.")
+                            return True
+                        tasks.append({"text": text, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                        st["tasks"] = tasks[-100:]
+                        st.pop("tasks_prompted", None)
+                        save_state(st)
+                        print("martin: Task added.")
+                        return True
+                    if action == "done":
+                        if len(args) < 2:
+                            print("martin: Provide a task index.")
+                            return True
+                        try:
+                            idx = int(args[1])
+                        except ValueError:
+                            print("martin: Invalid index.")
+                            return True
+                        if not (1 <= idx <= len(tasks)):
+                            print("martin: Index out of range.")
+                            return True
+                        task = tasks.pop(idx - 1)
+                        st["tasks"] = tasks
+                        st.pop("tasks_prompted", None)
+                        save_state(st)
+                        print(f"martin: Completed '{task.get('text','')}'.")
+                        return True
+                    print("martin: Unknown /tasks action.")
+                    return True
+                if name == "review":
+                    if not args:
+                        print("martin: Use /review on or /review off.")
+                        return True
+                    mode = args[0].lower()
+                    if mode not in ("on", "off"):
+                        print("martin: Use /review on or /review off.")
+                        return True
+                    st = load_state()
+                    st["review_mode"] = (mode == "on")
+                    save_state(st)
+                    print(f"martin: Review mode {mode}.")
+                    return True
+                if name == "rag":
+                    if not args or args[0].lower() != "status":
+                        print("martin: Use /rag status.")
+                        return True
+                    st = load_state()
+                    inbox = st.get("librarian_inbox", [])
+                    gaps = []
+                    try:
+                        if LEDGER_FILE.exists():
+                            with open(LEDGER_FILE, "r", encoding="utf-8") as f:
+                                lines = f.readlines()
+                            for line in reversed(lines):
+                                try:
+                                    record = json.loads(line)
+                                    entry = record.get("entry", {})
+                                    if entry.get("event") == "rag_gap":
+                                        gaps.append(entry.get("data", {}))
+                                    if len(gaps) >= 5:
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
+                    payload = {
+                        "inbox_count": len(inbox),
+                        "recent_gaps": gaps,
+                        "last_ingest": st.get("last_ingest", {}),
+                    }
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return True
+                if name == "export":
+                    if not args:
+                        print("martin: Use /export session <path>.")
+                        return True
+                    if args[0].lower() != "session":
+                        print("martin: Use /export session <path>.")
+                        return True
+                    out_path = args[1] if len(args) > 1 else str(Path("logs") / "session_export.json")
+                    st = load_state()
+                    bundle = {
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "transcript_tail": st.get("resume_snapshot", {}).get("transcript_tail", []),
+                        "context_cache": st.get("context_cache", {}),
+                        "tasks": st.get("tasks", []),
+                        "tool_ledger": read_recent(limit=50),
+                    }
+                    try:
+                        Path(out_path).write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+                        print(f"martin: Exported session to {out_path}")
+                    except Exception as e:
+                        print(f"martin: Export failed ({e})")
+                    return True
+                if name == "librarian":
+                    if not args:
+                        print("martin: Use /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>.")
+                        return True
+                    action = args[0].lower()
+                    if action == "inbox":
+                        st = load_state()
+                        inbox = st.get("librarian_inbox", [])
+                        if not inbox:
+                            print("martin: Librarian inbox is empty.")
+                            return True
+                        for idx, item in enumerate(inbox[-10:], 1):
+                            msg = item.get("message", {})
+                            event = msg.get("event", "note")
+                            details = msg.get("details", {})
+                            topic = details.get("topic") or details.get("prompt") or ""
+                            note_id = details.get("note_id", "")
+                            ingestable = "summary" in details
+                            flag = "[ingestable]" if ingestable else ""
+                            line = f"{idx}. {item.get('ts','')}: {event} {topic} {note_id} {flag}".strip()
+                            print(line)
+                            if event == "rag_gap" and details.get("suggestion"):
+                                print(f"   suggestion: {details.get('suggestion')}")
+                        return True
+                    if action == "request":
+                        topic = " ".join(args[1:]).strip()
+                        if not topic:
+                            print("martin: Provide a topic to request.")
+                            return True
+                        client = LibrarianClient()
+                        resp = client.request_research(topic)
+                        print(json.dumps(resp, ensure_ascii=False, indent=2))
+                        log_event(load_state(), "librarian_request", topic=topic, status=resp.get("status"))
+                        return True
+                    if action == "sources":
+                        topic = " ".join(args[1:]).strip()
+                        if not topic:
+                            print("martin: Provide a topic to request sources.")
+                            return True
+                        client = LibrarianClient()
+                        resp = client.request_sources(topic)
+                        print(json.dumps(resp, ensure_ascii=False, indent=2))
+                        log_event(load_state(), "librarian_sources_request", topic=topic, status=resp.get("status"))
+                        return True
+                    if action == "accept":
+                        if len(args) < 2:
+                            print("martin: Provide an inbox index to accept.")
+                            return True
+                        try:
+                            idx = int(args[1])
+                        except ValueError:
+                            print("martin: Invalid index.")
+                            return True
+                        st = load_state()
+                        inbox = st.get("librarian_inbox", [])
+                        if not inbox:
+                            print("martin: Librarian inbox is empty.")
+                            return True
+                        window = inbox[-10:]
+                        item = window[idx - 1] if 1 <= idx <= min(10, len(window)) else None
+                        if not item:
+                            print("martin: Index out of range.")
+                            return True
+                        details = (item.get("message") or {}).get("details", {})
+                        summary = details.get("summary", "")
+                        sources_text = details.get("sources_text", "")
+                        topic = details.get("topic") or details.get("prompt") or "librarian_note"
+                        client = LibrarianClient()
+                        if sources_text:
+                            resp = client.ingest_text(sources_text, topic=topic, source="librarian_sources")
+                            print(json.dumps(resp, ensure_ascii=False, indent=2))
+                            log_event(load_state(), "librarian_ingest_sources", topic=topic, status=resp.get("status"))
+                        elif not summary:
+                            resp = client.request_research(topic)
+                            print(json.dumps(resp, ensure_ascii=False, indent=2))
+                            log_event(load_state(), "librarian_request_from_gap", topic=topic, status=resp.get("status"))
+                        else:
+                            resp = client.ingest_text(summary, topic=topic, source="librarian_note")
+                            print(json.dumps(resp, ensure_ascii=False, indent=2))
+                            log_event(load_state(), "librarian_ingest_text", topic=topic, status=resp.get("status"))
+                        if resp.get("status") == "success":
+                            st["librarian_inbox"] = [i for i in inbox if i is not item]
+                            save_state(st)
+                        return True
+                    if action == "dismiss":
+                        if len(args) < 2:
+                            print("martin: Provide an inbox index to dismiss.")
+                            return True
+                        try:
+                            idx = int(args[1])
+                        except ValueError:
+                            print("martin: Invalid index.")
+                            return True
+                        st = load_state()
+                        inbox = st.get("librarian_inbox", [])
+                        window = inbox[-10:]
+                        item = window[idx - 1] if 1 <= idx <= min(10, len(window)) else None
+                        if not item:
+                            print("martin: Index out of range.")
+                            return True
+                        st["librarian_inbox"] = [i for i in inbox if i is not item]
+                        save_state(st)
+                        print("martin: Dismissed.")
+                        return True
+                    print("martin: Unknown /librarian action.")
+                    return True
+                if name == "catalog":
+                    print("martin: Fetching card catalog from Librarian...")
+                    # Use the same dispatcher as the main loop
+                    ok, output = dispatch_internal_ability("catalog.list", "")
+                    if ok:
+                        print(output)
+                    else:
+                        print(f"martin: Error fetching catalog: {output}")
+                    return True
+                if name == "context":
+                    if args and args[0].lower() == "refresh":
+                        from researcher.context_harvest import gather_context
+                        context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                        st = load_state()
+                        st["context_cache"] = context_cache
+                        save_state(st)
+                        chat_ui.print_context_summary(context_cache)
+                        return True
+                    if not context_cache:
+                        from researcher.context_harvest import gather_context
+                        context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                        st = load_state()
+                        st["context_cache"] = context_cache
+                        save_state(st)
+                    payload = dict(context_cache)
+                    try:
+                        st = load_state()
+                        prev = st.get("resume_snapshot", {}).get("context_cache", {})
+                        if isinstance(prev, dict):
+                            prev_recent = set(prev.get("recent_files", []) or [])
+                            curr_recent = set(payload.get("recent_files", []) or [])
+                            payload["context_diff"] = {
+                                "new_recent_files": sorted(list(curr_recent - prev_recent))[:20]
+                            }
+                    except Exception:
+                        pass
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return True
+                if name == "agent":
+                    if not args:
+                        print(f"martin: agent_mode={'on' if agent_mode else 'off'}")
+                        return True
+                    if args[0].lower() == "on":
+                        agent_mode = True
+                        print("martin: Agent mode ON.")
+                        return True
+                    if args[0].lower() == "off":
+                        agent_mode = False
+                        print("martin: Agent mode OFF.")
+                        return True
+                    if args[0].lower() == "status":
+                        print(f"martin: agent_mode={'on' if agent_mode else 'off'}")
+                        return True
+                if name == "cloud":
+                    if cfg.get("local_only"):
+                        print("martin: Cloud is disabled by local-only mode.")
+                        return True
+                    if not args:
+                        print(f"martin: cloud={'on' if cloud_enabled else 'off'}")
+                        return True
+                    if args[0].lower() == "on":
+                        cloud_enabled = True
+                        print("martin: Cloud ON.")
+                        return True
+                    if args[0].lower() == "off":
+                        cloud_enabled = False
+                        print("martin: Cloud OFF.")
+                        return True
+                if name == "ask":
+                    prompt = " ".join(args).strip()
+                    if not prompt:
+                        print("martin: Provide a question.")
+                        return True
+                    cmd_ask(cfg, prompt, k=5, use_llm=False, cloud_mode="off", force_simple=False, as_json=False)
+                    return True
+                if name == "ingest":
+                    if not args:
+                        print("martin: Provide a path to ingest.")
+                        return True
+                    text = " ".join(args).lower()
+                    ctx = get_system_context()
+                    base = ""
+                    if "onedrive" in text and "desktop" in text:
+                        base = ctx.get("paths", {}).get("onedrive_desktop") or ""
+                    elif "desktop" in text:
+                        base = ctx.get("paths", {}).get("desktop") or ""
+                    if base and ("research agent" in text or "research_agent" in text):
+                        target = str(Path(base) / "research_agent")
+                        cmd_ingest(cfg, [target], force_simple=False, as_json=False, skip_librarian=True)
+                        return True
+                    if base:
+                        cmd_ingest(cfg, [base], force_simple=False, as_json=False, skip_librarian=True)
+                        return True
+                    cmd_ingest(cfg, args, force_simple=False, as_json=False, skip_librarian=True)
+                    return True
+                print("martin: Unknown command. Use /help.")
+                return True
+
+            if user_input.strip().startswith("/"):
+                if _handle_slash(user_input.strip()):
+                    if should_exit:
+                        break
                     continue
 
-        interaction_history.append("You: " + user_input)
-        transcript.append("You: " + user_input)
-        session_transcript.append("You: " + user_input)
-        try:
-            st = load_state()
-            st["session_memory"] = {"transcript": session_transcript[-200:]}
-            save_state(st)
-        except Exception:
-            pass
-        if not _is_disagreement(user_input):
-            last_user_request = user_input
+            if cloud_enabled and cfg.get("cloud", {}).get("trigger_on_disagreement") and _is_disagreement(user_input) and not cfg.get("local_only"):
+                prompt = (last_user_request or user_input).strip()
+                prompt = f"{prompt}\n\nUser feedback: {user_input}\nPlease answer correctly."
+                client = LibrarianClient()
+                sanitized_prompt, _changed_cloud = sanitize.sanitize_prompt(prompt or "")
+                cloud_resp = client.query_cloud(
+                    prompt=sanitized_prompt,
+                    cloud_mode="always",
+                    cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
+                )
+                client.close()
+                if cloud_resp.get("status") == "success":
+                    result = cloud_resp.get("result", {})
+                    output = result.get("output", "")
+                    if output:
+                        print(f"\033[92mmartin:\n{output}\033[0m")
+                        transcript.append("martin: " + output)
+                        interaction_history.append("martin: " + output)
+                        continue
 
-        turn_bar = tqdm(total=2, desc="Turn", unit="step", leave=False) if True else None # Always show for now
+            interaction_history.append("You: " + user_input)
+            transcript.append("You: " + user_input)
+            session_transcript.append("You: " + user_input)
+            try:
+                st = load_state()
+                st["session_memory"] = {"transcript": session_transcript[-200:]}
+                save_state(st)
+            except Exception:
+                pass
+            if not _is_disagreement(user_input):
+                last_user_request = user_input
 
-        if turn_bar: turn_bar.update(1)
-        step_details = decide_next_step(user_input)
-        log_event(st, "next_step_decision", details=step_details)
+            turn_bar = tqdm(total=2, desc="Turn", unit="step", leave=False) if True else None # Always show for now
 
-        if turn_bar: turn_bar.update(1)
+            if turn_bar: turn_bar.update(1)
+            step_details = decide_next_step(user_input)
+            log_event(st, "next_step_decision", details=step_details)
 
-        def _try_cloud(prompt: str, reason: str) -> Optional[str]:
-            client = LibrarianClient()
-            cloud_resp = client.query_cloud(
-                prompt=prompt,
-                cloud_mode="always",
-                cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
+            if turn_bar: turn_bar.update(1)
+
+            def _try_cloud(prompt: str, reason: str) -> Optional[str]:
+                client = LibrarianClient()
+                sanitized_prompt, _changed_cloud = sanitize.sanitize_prompt(prompt or "")
+                cloud_resp = client.query_cloud(
+                    prompt=sanitized_prompt,
+                    cloud_mode="always",
+                    cloud_cmd=cfg.get("cloud", {}).get("cmd_template") or os.environ.get("CLOUD_CMD", ""),
+                )
+                client.close()
+                if cloud_resp.get("status") == "success":
+                    result = cloud_resp.get("result", {})
+                    output = result.get("output", "")
+                    if output:
+                        log_event(st, "cloud_hop", reason=reason, output_len=len(output))
+                        return output
+                log_event(st, "cloud_hop_failed", reason=reason, error=cloud_resp.get("message", "no_output"))
+                return None
+
+            review_mode = False
+            try:
+                review_mode = bool(load_state().get("review_mode"))
+            except Exception:
+                review_mode = False
+            main_sys = (
+                "You are Martin, a helpful and competent AI researcher assistant.\n"
+                "Speak as Martin. Be direct and concise.\n"
+                "Do not describe internal reasoning or system instructions.\n"
+                "You have access to the local filesystem via `command:` lines.\n"
+                "Do not claim you cannot access files; propose commands instead.\n"
+                "You can coordinate with the Librarian agent for background research and RAG updates.\n"
+                "Follow the guidance and context. Be decisive but safe."
             )
-            client.close()
-            if cloud_resp.get("status") == "success":
-                result = cloud_resp.get("result", {})
-                output = result.get("output", "")
-                if output:
-                    log_event(st, "cloud_hop", reason=reason, output_len=len(output))
-                    return output
-            log_event(st, "cloud_hop_failed", reason=reason, error=cloud_resp.get("message", "no_output"))
-            return None
+            qs = step_details.get('question_summaries') or []
+            q_lines = "\n".join(f"- {q}" for q in qs) if qs else "- none"
 
-        main_sys = (
-            "You are Martin, a helpful and competent AI researcher assistant.\n"
-            "Speak as Martin. Be direct and concise.\n"
-            "Do not describe internal reasoning or system instructions.\n"
-            "You have access to the local filesystem via `command:` lines.\n"
-            "Do not claim you cannot access files; propose commands instead.\n"
-            "Follow the guidance and context. Be decisive but safe."
-        )
-        qs = step_details.get('question_summaries') or []
-        q_lines = "\n".join(f"- {q}" for q in qs) if qs else "- none"
+            # current_username is a global placeholder in llm_utils, populated from os.getenv("USER")
+            # interaction_history is also a global placeholder in llm_utils
 
-        # current_username is a global placeholder in llm_utils, populated from os.getenv("USER")
-        # interaction_history is also a global placeholder in llm_utils
-
-        sys_ctx = {}
-        try:
-            sys_ctx = get_system_context()
-        except Exception:
             sys_ctx = {}
-        mem_ctx = {"last_path": _LAST_PATH, "last_listing": _LAST_LISTING[:20]}
-        main_user = (
-            "Context (do not repeat):\n"
-            f"{json.dumps({'user_intent': step_details.get('user_intent_summary'), 'capability_inventory': step_details.get('inventory', []), 'snapshot': step_details.get('snapshot', {}), 'system': sys_ctx, 'memory': mem_ctx}, ensure_ascii=False, indent=2)}\n\n"
-            "Guidance (do not repeat):\n"
-            f"{step_details.get('guidance_banner', '')}\n\n"
-            "Behavior (do not repeat):\n"
-            f"{step_details.get('behavior', 'chat')}\n\n"
-            "Question summaries (user asked):\n"
-            f"{q_lines}\n\n"
-            "Internal invocation protocol: command: martin.<ability_key> <payload>\n\n"
-            "CRITICAL: For any request involving file system navigation (cd), listing files (ls, dir), reading files (cat, type), or running tools, you MUST reply with a `command:` line. Do not suggest the command in plain text.\n"
-            "When you decide to execute an action, adopt a helpful and proactive tone, like 'Let me handle that for you,' before providing the `command:` line.\n"
-            "If the user asks to inspect files, run tools, or check system state, include `command:` lines.\n"
-            "If behavior = chat, respond directly to the user with a helpful reply, but follow the CRITICAL rule above.\n"
-            "If behavior = build/run/diagnose, output precise steps only if truly warranted.\n"
-            "If behavior = review, focus on bugs, risks, regressions, and missing tests; be concise and specific.\n"
-            "Do not mention internal analysis, guidance, or behavior classification."
-        )
-        payload = {
-            "model": MODEL_MAIN,
-            "input": [
-                {"role": "system", "content": main_sys},
-                {"role": "user", "content": main_user},
-            ],
-            "temperature": 0.4,
-            "max_output_tokens": 1200,
-        }
-        bot_json = _post_responses(payload, label="Main") # Use llm_utils's post_responses
-        bot_response = _extract_output_text(bot_json) or ""
-        interaction_history.append("martin: " + bot_response)
+            try:
+                sys_ctx = get_system_context()
+            except Exception:
+                sys_ctx = {}
+            mem_ctx = {"last_path": _LAST_PATH, "last_listing": _LAST_LISTING[:20]}
+            last_cmd_summary = {}
+            try:
+                last_cmd_summary = load_state().get("last_command_summary", {}) or {}
+            except Exception:
+                last_cmd_summary = {}
+            behavior_mode = "review" if review_mode else step_details.get("behavior", "chat")
+            main_user = (
+                "Context (do not repeat):\n"
+                f"{json.dumps({'user_intent': step_details.get('user_intent_summary'), 'capability_inventory': step_details.get('inventory', []), 'snapshot': step_details.get('snapshot', {}), 'system': sys_ctx, 'memory': mem_ctx, 'last_command': last_cmd_summary}, ensure_ascii=False, indent=2)}\n\n"
+                "Guidance (do not repeat):\n"
+                f"{step_details.get('guidance_banner', '')}\n\n"
+                "Behavior (do not repeat):\n"
+                f"{behavior_mode}\n\n"
+                "Question summaries (user asked):\n"
+                f"{q_lines}\n\n"
+                "Internal invocation protocol: command: martin.<ability_key> <payload>\n\n"
+                "CRITICAL: For any request involving file system navigation (cd), listing files (ls, dir), reading files (cat, type), or running tools, you MUST reply with a `command:` line. Do not suggest the command in plain text.\n"
+                "When you decide to execute an action, adopt a helpful and proactive tone, like 'Let me handle that for you,' before providing the `command:` line.\n"
+                "If the user asks to inspect files, run tools, or check system state, include `command:` lines.\n"
+                "If behavior = chat, respond directly to the user with a helpful reply, but follow the CRITICAL rule above.\n"
+                "If behavior = build/run/diagnose, output precise steps only if truly warranted.\n"
+                "If behavior = review, focus on bugs, risks, regressions, and missing tests; be concise and specific.\n"
+                "Do not mention internal analysis, guidance, or behavior classification."
+            )
+            payload = {
+                "model": MODEL_MAIN,
+                "input": [
+                    {"role": "system", "content": main_sys},
+                    {"role": "user", "content": main_user},
+                ],
+                "temperature": 0.4,
+                "max_output_tokens": 1200,
+            }
+            bot_json = _post_responses(payload, label="Main") # Use llm_utils's post_responses
+            bot_response = _extract_output_text(bot_json) or ""
+            interaction_history.append("martin: " + bot_response)
 
-        if turn_bar: turn_bar.update(1)
-        if turn_bar: turn_bar.close()
+            if turn_bar: turn_bar.update(1)
+            if turn_bar: turn_bar.close()
 
-        if not bot_response:
-            print("\033[93mmartin: No response received from main call.\033[0m")
-            logger.info("chat_no_response")
-            continue
+            if not bot_response:
+                print("\033[93mmartin: No response received from main call.\033[0m")
+                logger.info("chat_no_response")
+                continue
 
-        if cfg.get("rephraser", {}).get("enabled") and "command:" not in bot_response.lower():
-            bot_response = rephraser(bot_response)
+            if cfg.get("rephraser", {}).get("enabled") and "command:" not in bot_response.lower():
+                bot_response = rephraser(bot_response)
 
-        if cloud_enabled and cfg.get("cloud", {}).get("trigger_on_empty_or_decline", True):
-            lowered = (bot_response or "").lower()
-            decline = any(p in lowered for p in ("i can't", "i cannot", "unable to", "can't directly", "i don't know"))
-            if decline:
-                cloud_answer = _try_cloud(user_input, "assistant_declined")
-                if cloud_answer:
-                    bot_response = cloud_answer
+            if cloud_enabled and cfg.get("cloud", {}).get("trigger_on_empty_or_decline", True) and not cfg.get("local_only"):
+                lowered = (bot_response or "").lower()
+                decline = any(p in lowered for p in ("i can't", "i cannot", "unable to", "can't directly", "i don't know"))
+                if decline:
+                    cloud_answer = _try_cloud(user_input, "assistant_declined")
+                    if cloud_answer:
+                        bot_response = cloud_answer
 
-        def _auto_command_for_request(user_text: str, reply: str) -> str:
-            global _LAST_PATH
-            text = (user_text or "").lower()
-            if "command:" in reply.lower():
+            def _auto_command_for_request(user_text: str, reply: str) -> str:
+                global _LAST_PATH
+                text = (user_text or "").lower()
+                if "command:" in reply.lower():
+                    return reply
+
+                def _quote_path(p: str) -> str:
+                    if not p:
+                        return p
+                    if p.startswith('"') and p.endswith('"'):
+                        return p
+                    if " " in p or "(" in p or ")" in p:
+                        return f"\"{p}\""
+                    return p
+
+                def _best_listing_match(text_l: str) -> str:
+                    best = ""
+                    best_score = 0
+                    tokens = [t for t in text_l.split() if t]
+                    for name in _LAST_LISTING:
+                        n = name.lower()
+                        if not n:
+                            continue
+                        score = 0
+                        if n in text_l:
+                            score += len(n) * 2
+                        for t in tokens:
+                            if t in n:
+                                score += len(t)
+                        if score > best_score:
+                            best_score = score
+                            best = name
+                    return best
+
+                if "memory" in text or "what do you remember" in text or "check memory" in text:
+                    mem = {
+                        "last_path": _LAST_PATH,
+                        "last_listing": _LAST_LISTING[:20],
+                    }
+                    return "Memory:\n" + json.dumps(mem, ensure_ascii=False)
+
+                if _LAST_PATH and any(k in text for k in ("navigate", "open", "look at", "list", "show", "read", "inspect")):
+                    best = _best_listing_match(text)
+                    if best:
+                        target = str(Path(_LAST_PATH) / best)
+                        if os.name == "nt":
+                            cmd = f"command: Get-ChildItem -Path {_quote_path(target)} -Force"
+                        else:
+                            cmd = f"command: ls -la {_quote_path(target)}"
+                        return f"I can open {best} now.\n\n{cmd}"
+
+                if "desktop" in text:
+                    if os.name == "nt":
+                        if "onedrive" in text:
+                            cmd = "command: Get-ChildItem -Path $env:USERPROFILE\\OneDrive\\Desktop -Force"
+                        else:
+                            cmd = "command: Get-ChildItem -Path $env:USERPROFILE\\Desktop -Force"
+                    else:
+                        cmd = "command: ls -la ~/Desktop"
+                    return "I can list your desktop now.\n\n" + cmd
+
+                if _LAST_PATH and ("open work" in text or "open tasks" in text or "todo" in text):
+                    target = _LAST_PATH
+                    best = _best_listing_match(text)
+                    if best:
+                        target = str(Path(_LAST_PATH) / best)
+                    cmd = f"command: rg -n \"TODO|FIXME|TBD|pending\" {_quote_path(target)}"
+                    return "Checking for open work in the last folder.\n\n" + cmd
+
                 return reply
 
-            def _quote_path(p: str) -> str:
-                if not p:
-                    return p
-                if p.startswith('"') and p.endswith('"'):
-                    return p
-                if " " in p or "(" in p or ")" in p:
-                    return f"\"{p}\""
-                return p
+            bot_response = _auto_command_for_request(user_input, bot_response)
 
-            def _best_listing_match(text_l: str) -> str:
-                best = ""
-                best_score = 0
-                tokens = [t for t in text_l.split() if t]
-                for name in _LAST_LISTING:
-                    n = name.lower()
-                    if not n:
-                        continue
-                    score = 0
-                    if n in text_l:
-                        score += len(n) * 2
-                    for t in tokens:
-                        if t in n:
-                            score += len(t)
-                    if score > best_score:
-                        best_score = score
-                        best = name
-                return best
-
-            if "memory" in text or "what do you remember" in text or "check memory" in text:
-                mem = {
-                    "last_path": _LAST_PATH,
-                    "last_listing": _LAST_LISTING[:20],
-                }
-                return "Memory:\n" + json.dumps(mem, ensure_ascii=False)
-
-            if _LAST_PATH and any(k in text for k in ("navigate", "open", "look at", "list", "show", "read", "inspect")):
-                best = _best_listing_match(text)
-                if best:
-                    target = str(Path(_LAST_PATH) / best)
-                    if os.name == "nt":
-                        cmd = f"command: Get-ChildItem -Path {_quote_path(target)} -Force"
-                    else:
-                        cmd = f"command: ls -la {_quote_path(target)}"
-                    return f"I can open {best} now.\n\n{cmd}"
-
-            if "desktop" in text:
-                if os.name == "nt":
-                    if "onedrive" in text:
-                        cmd = "command: Get-ChildItem -Path $env:USERPROFILE\\OneDrive\\Desktop -Force"
-                    else:
-                        cmd = "command: Get-ChildItem -Path $env:USERPROFILE\\Desktop -Force"
-                else:
-                    cmd = "command: ls -la ~/Desktop"
-                return "I can list your desktop now.\n\n" + cmd
-
-            if _LAST_PATH and ("open work" in text or "open tasks" in text or "todo" in text):
-                target = _LAST_PATH
-                best = _best_listing_match(text)
-                if best:
-                    target = str(Path(_LAST_PATH) / best)
-                cmd = f"command: rg -n \"TODO|FIXME|TBD|pending\" {_quote_path(target)}"
-                return "Checking for open work in the last folder.\n\n" + cmd
-
-            return reply
-
-        bot_response = _auto_command_for_request(user_input, bot_response)
-
-        print(f"\033[92mmartin:\n{bot_response}\033[0m")
-        transcript.append("martin: " + bot_response)
-        session_transcript.append("martin: " + bot_response)
-        try:
-            st = load_state()
-            st["session_memory"] = {"transcript": session_transcript[-200:]}
-            save_state(st)
-        except Exception:
-            pass
-
-        def _parse_internal_cmd(c: str) -> Tuple[Optional[str], Optional[str]]:
-            s = c.strip()
-            # Martin's internal commands start with "martin."
-            if not s.lower().startswith("martin."):
-                return (None, None)
-            body = s[len("martin."):].strip()
-            if " " in body:
-                key, payload = body.split(" ", 1)
-            elif ":" in body:
-                key, payload = body.split(":", 1)
-            else:
-                key, payload = body, ""
-            return (key.strip(), payload.strip())
-
-        terminal_commands = extract_commands(bot_response) if "command:" in bot_response.lower() else [] # Use researcher's extract_commands
-        if terminal_commands:
-            print("\n\033[96mmartin: Proposed command plan (review):\033[0m")
-            for i, c in enumerate(terminal_commands, 1):
-                print(f"  {i}. {c}")
+            print(f"\033[92mmartin:\n{bot_response}\033[0m")
+            transcript.append("martin: " + bot_response)
+            session_transcript.append("martin: " + bot_response)
             try:
+                st = load_state()
+                st["session_memory"] = {"transcript": session_transcript[-200:]}
+                save_state(st)
+            except Exception:
+                pass
+
+            def _parse_internal_cmd(c: str) -> Tuple[Optional[str], Optional[str]]:
+                s = c.strip()
+                # Martin's internal commands start with "martin."
+                if not s.lower().startswith("martin."):
+                    return (None, None)
+                body = s[len("martin."):].strip()
+                if " " in body:
+                    key, payload = body.split(" ", 1)
+                elif ":" in body:
+                    key, payload = body.split(":", 1)
+                else:
+                    key, payload = body, ""
+                return (key.strip(), payload.strip())
+
+            terminal_commands = extract_commands(bot_response) if "command:" in bot_response.lower() else [] # Use researcher's extract_commands
+            if terminal_commands:
+                print("\033[96mmartin: Rationale:\033[0m " + (user_input.strip() or "requested action"))
+                print("\n\033[96mmartin: Proposed command plan (review):\033[0m")
+                risk_info = []
+                for c in terminal_commands:
+                    risk = classify_command_risk(c, command_allowlist, command_denylist)
+                    risk_info.append(risk)
+                for i, (c, risk) in enumerate(zip(terminal_commands, risk_info), 1):
+                    tag = "" if risk["level"] == "low" else f" [{risk['level'].upper()}]"
+                    print(f"  {i}. {c}{tag}")
+                    if risk["reasons"]:
+                        print(f"     - {', '.join(risk['reasons'])}")
+                blocked = [c for c, r in zip(terminal_commands, risk_info) if r["level"] == "blocked"]
+                if blocked:
+                    print("\033[93mmartin: One or more commands were blocked by policy and will be skipped.\033[0m")
+                    terminal_commands = [c for c, r in zip(terminal_commands, risk_info) if r["level"] != "blocked"]
+                    risk_info = [r for r in risk_info if r["level"] != "blocked"]
+                def _edit_commands(cmds: List[str]) -> List[str]:
+                    edited = []
+                    for idx, c in enumerate(cmds, 1):
+                        try:
+                            repl = input(f"\033[93mEdit command {idx} (enter to keep):\033[0m ").strip()
+                        except (EOFError, KeyboardInterrupt):
+                            repl = ""
+                        edited.append(repl if repl else c)
+                    return edited
                 if approval_policy in ("never", "on-failure") or agent_mode:
                     confirm = "yes"
                 else:
-                    confirm = input("\033[93mApprove running these commands? (yes/no/abort)\033[0m ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                confirm = "no" # Default to no on interrupt/EOF
-            if confirm == "abort":
-                print("\033[92mmartin: Aborting per request.\033[0m")
-                logger.info("chat_cmd_abort count=%d", len(terminal_commands))
-                continue
-            elif confirm == "no":
-                print("\033[92mmartin: Understood - not running commands. I remain at your disposal.\033[0m")
-                logger.info("chat_cmd_denied count=%d", len(terminal_commands))
-                continue
-
-        if not terminal_commands:
-            continue
-
-        # Persist plan state for UX continuity
-        try:
-            st = load_state()
-            st["last_plan"] = {"steps": terminal_commands, "status": "pending"}
-            save_state(st)
-        except Exception:
-            pass
-
-        plan = []
-        for i, cmd in enumerate(terminal_commands):
-            raw = cmd.replace("command:", "", 1).strip() if cmd.lower().startswith("command:") else cmd
-            ability_key, payload_txt = _parse_internal_cmd(raw)
-            plan.append({
-                "index": i + 1,
-                "cmd": cmd,
-                "status": "pending",
-                "internal_key": ability_key,
-                "payload": payload_txt,
-                "output": "",
-                "started_at": None,
-                "ended_at": None,
-                "duration_s": 0.0,
-            })
-
-        successes_this_turn = 0
-        failures_this_turn = 0
-        bar = tqdm(plan, desc="Executing Command Plan", unit="cmd", leave=False) # Use tqdm
-        for step in bar:
-            bar.set_postfix({"ok": successes_this_turn, "fail": failures_this_turn}, refresh=True)
-            if step["status"] != "pending":
-                continue
-            step["started_at"] = time.time()
-            print(f"Executing: {step['cmd']}")
-            if step.get("internal_key"):
-                started = time.time()
-                try:
-                    # Use researcher's dispatch_internal_ability
-                    ok, output = dispatch_internal_ability(step["internal_key"], step.get("payload") or "")
-                except Exception as e:
-                    ok = False
-                    output = f"(internal error) {e}"
-                step["ended_at"] = time.time()
-                step["duration_s"] = round(step["ended_at"] - started, 3)
-            else:
-                # Enforce sandbox before running
-                allowed, reason = enforce_sandbox(step["cmd"], sandbox_mode, str(Path.cwd()))
-                if not allowed:
-                    ok, output = False, reason
-                else:
-                    ok, output = run_command_smart(step["cmd"])
-            step["ended_at"] = step["ended_at"] or time.time()
-            step["duration_s"] = step["duration_s"] or round(step["ended_at"] - step["started_at"], 3)
-            step["output"] = output or ""
-            if ok:
-                step["status"] = "ok"
-                successes_this_turn += 1
-                if output:
-                    stored = _store_long_output(output, "cmd")
-                    display = _format_output_for_display(output)
-                    print(display)
-                    if stored:
-                        print(f"[full output saved to {stored}]")
-                # Capture last path from successful listing commands.
-                cmd_txt = step["cmd"]
-                if "Get-ChildItem -Path" in cmd_txt:
-                    parts = cmd_txt.split("Get-ChildItem -Path", 1)[1].strip()
-                    cleaned = parts.replace(" -Force", "").replace("-Force", "").strip()
-                    _LAST_PATH = cleaned.strip('"').strip("'")
-                    names = []
-                    for line in (output or "").splitlines():
-                        line = line.rstrip()
-                        if not line:
-                            continue
-                        if line.startswith("Directory:"):
-                            continue
-                        if line.startswith("Mode") or line.startswith("----"):
-                            continue
-                        if line[0] in ("d", "-"):
-                            import re
-                            cols = re.split(r"\s{2,}", line)
-                            if cols:
-                                names.append(cols[-1])
-                    if names:
-                        _LAST_LISTING[:] = names
-                    global _MEMORY_DIRTY
-                    _MEMORY_DIRTY = True
-                elif cmd_txt.startswith("command:"):
-                    cmd_txt = cmd_txt[len("command:"):].strip()
-                if cmd_txt.startswith("ls -la "):
-                    _LAST_PATH = cmd_txt[len("ls -la "):].strip().strip('"').strip("'")
-                    names = []
-                    for line in (output or "").splitlines():
-                        if not line or line.startswith("total "):
-                            continue
-                        if line[0] in ("d", "-"):
-                            parts = line.split()
-                            if parts:
-                                names.append(parts[-1])
-                    if names:
-                        _LAST_LISTING[:] = names
-                    _MEMORY_DIRTY = True
-                logger.info("cmd_ok cmd=%s", step["cmd"])
-            else:
-                step["status"] = "fail"
-                failures_this_turn += 1
-                if output:
-                    stored = _store_long_output(output, "cmd_fail")
-                    display = _format_output_for_display(output)
-                    print(display)
-                    if stored:
-                        print(f"[full output saved to {stored}]")
-                logger.info("cmd_fail cmd=%s", step["cmd"])
-                # Use researcher's diagnose_failure
-                diagnosis = diagnose_failure(step["cmd"], output or "")
-                print(f"\033[93mmartin (diagnosis): {diagnosis}\033[0m")
-                try:
-                    if agent_mode:
-                        rerun_option = "yes"
-                    else:
-                        rerun_option = input("\033[92mmartin: Apply suggested fix commands now, or abort? (yes/no/abort)\033[0m ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    rerun_option = "no"
-                if rerun_option == 'yes':
-                    interaction_history.append("martin (diagnosis): " + diagnosis)
-                    new_terminal_commands = extract_commands(diagnosis) # Use researcher's extract_commands
-                    if not new_terminal_commands:
-                        print("\033[93mmartin: Diagnosis included no runnable commands.\033[0m")
-                    else:
-                        print("\n\033[96mmartin: Proposed FIX commands (review):\033[0m")
-                        for i2, c2 in enumerate(new_terminal_commands, 1):
-                            print(f"  {i2}. {c2}")
+                    while True:
                         try:
-                            if agent_mode:
-                                confirm_fix = "yes"
-                            else:
-                                confirm_fix = input("\033[93mApprove running FIX commands? (yes/no/abort)\033[0m ").strip().lower()
+                            confirm = input("\033[93mApprove running these commands? (yes/no/abort/edit/explain/dry-run)\033[0m ").strip().lower()
                         except (EOFError, KeyboardInterrupt):
-                            confirm_fix = "no"
-                        if confirm_fix == "abort":
-                            print("\033[92mmartin: Aborting per request.\033[0m")
+                            confirm = "no"
+                        if confirm == "explain":
+                            print("\033[96mmartin: Rationale:\033[0m " + (user_input.strip() or "requested action"))
+                            continue
+                        if confirm == "edit":
+                            terminal_commands = _edit_commands(terminal_commands)
+                            continue
+                        if confirm == "dry-run":
+                            print("\033[92mmartin: Dry run only; no commands executed.\033[0m")
+                            logger.info("chat_cmd_dry_run count=%d", len(terminal_commands))
+                            terminal_commands = []
                             break
-                        elif confirm_fix == "yes":
-                            for new_command in new_terminal_commands:
-                                print(f"Executing (fix): {new_command}")
-                                # Use researcher's run_command_smart
-                                s2, out2 = run_command_smart(new_command)
-                                if s2:
-                                    successes_this_turn += 1
-                                else:
-                                    failures_this_turn += 1
-                        else:
-                            print("\033[92mmartin: Fix not applied. Continuing.\033[0m")
-                elif rerun_option == 'abort':
-                    print("\033[92mmartin: Aborting the operation.\033[0m")
-                    for rest in plan:
-                        if rest["status"] == "pending":
-                            rest["status"] = "skipped"
-                    break
+                        break
+                if confirm == "abort":
+                    print("\033[92mmartin: Aborting per request.\033[0m")
+                    logger.info("chat_cmd_abort count=%d", len(terminal_commands))
+                    continue
+                elif confirm == "no":
+                    print("\033[92mmartin: Understood - not running commands. I remain at your disposal.\033[0m")
+                    logger.info("chat_cmd_denied count=%d", len(terminal_commands))
+                    continue
+                if any(r["level"] == "high" for r in risk_info):
+                    try:
+                        high_confirm = input("\033[91mHigh-risk commands detected. Type YES to proceed:\033[0m ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        high_confirm = "no"
+                    if high_confirm != "yes":
+                        print("\033[93mmartin: High-risk commands skipped.\033[0m")
+                        terminal_commands = [c for c, r in zip(terminal_commands, risk_info) if r["level"] != "high"]
+                        risk_info = [r for r in risk_info if r["level"] != "high"]
+
+            if not terminal_commands:
+                continue
+
+            # Persist plan state for UX continuity
+            try:
+                st = load_state()
+                st["last_plan"] = {"steps": terminal_commands, "status": "pending"}
+                save_state(st)
+            except Exception:
+                pass
+
+            plan = []
+            for i, cmd in enumerate(terminal_commands):
+                raw = cmd.replace("command:", "", 1).strip() if cmd.lower().startswith("command:") else cmd
+                ability_key, payload_txt = _parse_internal_cmd(raw)
+                risk = classify_command_risk(cmd, command_allowlist, command_denylist)
+                plan.append({
+                    "index": i + 1,
+                    "cmd": cmd,
+                    "status": "pending",
+                    "internal_key": ability_key,
+                    "payload": payload_txt,
+                    "risk": risk.get("level"),
+                    "risk_reasons": risk.get("reasons", []),
+                    "rc": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "output": "",
+                    "started_at": None,
+                    "ended_at": None,
+                    "duration_s": 0.0,
+                })
+
+            successes_this_turn = 0
+            failures_this_turn = 0
+            bar = tqdm(plan, desc="Executing Command Plan", unit="cmd", leave=False) # Use tqdm
+            for step in bar:
+                bar.set_postfix({"ok": successes_this_turn, "fail": failures_this_turn}, refresh=True)
+                if step["status"] != "pending":
+                    continue
+                step["started_at"] = time.time()
+                print(f"Executing: {step['cmd']}")
+                if step.get("internal_key"):
+                    started = time.time()
+                    try:
+                        # Use researcher's dispatch_internal_ability
+                        ok, output = dispatch_internal_ability(step["internal_key"], step.get("payload") or "")
+                    except Exception as e:
+                        ok = False
+                        output = f"(internal error) {e}"
+                    step["rc"] = 0 if ok else 1
+                    step["stdout"] = output or ""
+                    step["ended_at"] = time.time()
+                    step["duration_s"] = round(step["ended_at"] - started, 3)
                 else:
-                    print("\033[92mmartin: Acknowledged - not applying fix.\033[0m")
-            sess.record_cmd(0 if ok else 1) # Record command outcome
-        bar.close()
-        print(f"\033[92mmartin: Turn complete - OK: {successes_this_turn}, FAIL: {failures_this_turn}\033[0m")
-        logger.info("chat_turn_complete ok=%d fail=%d", successes_this_turn, failures_this_turn)
-        try:
-            st = load_state()
-            st["last_plan"] = {"steps": terminal_commands, "status": "complete", "ok": successes_this_turn, "fail": failures_this_turn}
-            save_state(st)
-        except Exception:
-            pass
+                    # Enforce sandbox before running
+                    if step.get("risk") == "blocked":
+                        ok, output = False, "blocked by command policy"
+                        stdout_text, stderr_text, rc = "", output, 2
+                    elif step.get("risk") == "high":
+                        ok, output = False, "high-risk command requires explicit confirmation"
+                        stdout_text, stderr_text, rc = "", output, 2
+                    else:
+                        allowed, reason = enforce_sandbox(step["cmd"], sandbox_mode, str(Path.cwd()))
+                        if not allowed:
+                            if _maybe_override_sandbox(reason):
+                                ok, stdout_text, stderr_text, rc = run_command_smart_capture(step["cmd"])
+                            else:
+                                ok, stdout_text, stderr_text, rc = False, "", reason, 2
+                        else:
+                            ok, stdout_text, stderr_text, rc = run_command_smart_capture(step["cmd"])
+                    output = stdout_text
+                    if stderr_text:
+                        output = (stdout_text + "\n[stderr]\n" + stderr_text).strip()
+                    step["rc"] = rc
+                    step["stdout"] = stdout_text or ""
+                    step["stderr"] = stderr_text or ""
+                step["ended_at"] = step["ended_at"] or time.time()
+                step["duration_s"] = step["duration_s"] or round(step["ended_at"] - step["started_at"], 3)
+                step["output"] = output or ""
+                if ok:
+                    step["status"] = "ok"
+                    successes_this_turn += 1
+                    output_path = ""
+                    if output:
+                        stored = _store_long_output(output, "cmd")
+                        display = _format_output_for_display(output)
+                        print(display)
+                        if stored:
+                            output_path = stored
+                            print(f"[full output saved to {stored}]")
+                    try:
+                        append_tool_entry({
+                            "command": step["cmd"],
+                            "cwd": str(Path.cwd()),
+                            "rc": step.get("rc"),
+                            "ok": ok,
+                            "duration_s": step.get("duration_s"),
+                            "stdout": step.get("stdout"),
+                            "stderr": step.get("stderr"),
+                            "output_path": output_path,
+                            "risk": step.get("risk"),
+                            "risk_reasons": step.get("risk_reasons"),
+                            "sandbox_mode": sandbox_mode,
+                            "approval_policy": approval_policy,
+                        })
+                    except Exception:
+                        pass
+                    try:
+                        st = load_state()
+                        st["last_command_summary"] = {
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "cmd": step.get("cmd"),
+                            "rc": step.get("rc"),
+                            "ok": True,
+                            "summary": chat_ui.shorten_output(output),
+                        }
+                        save_state(st)
+                    except Exception:
+                        pass
+                    # Capture last path from successful listing commands.
+                    cmd_txt = step["cmd"]
+                    if "Get-ChildItem -Path" in cmd_txt:
+                        parts = cmd_txt.split("Get-ChildItem -Path", 1)[1].strip()
+                        cleaned = parts.replace(" -Force", "").replace("-Force", "").strip()
+                        _LAST_PATH = cleaned.strip('"').strip("'")
+                        names = []
+                        for line in (output or "").splitlines():
+                            line = line.rstrip()
+                            if not line:
+                                continue
+                            if line.startswith("Directory:"):
+                                continue
+                            if line.startswith("Mode") or line.startswith("----"):
+                                continue
+                            if line[0] in ("d", "-"):
+                                import re
+                                cols = re.split(r"\s{2,}", line)
+                                if cols:
+                                    names.append(cols[-1])
+                        if names:
+                            _LAST_LISTING[:] = names
+                        global _MEMORY_DIRTY
+                        _MEMORY_DIRTY = True
+                    elif cmd_txt.startswith("command:"):
+                        cmd_txt = cmd_txt[len("command:"):].strip()
+                    if cmd_txt.startswith("ls -la "):
+                        _LAST_PATH = cmd_txt[len("ls -la "):].strip().strip('"').strip("'")
+                        names = []
+                        for line in (output or "").splitlines():
+                            if not line or line.startswith("total "):
+                                continue
+                            if line[0] in ("d", "-"):
+                                parts = line.split()
+                                if parts:
+                                    names.append(parts[-1])
+                        if names:
+                            _LAST_LISTING[:] = names
+                        _MEMORY_DIRTY = True
+                    logger.info("cmd_ok cmd=%s", step["cmd"])
+                else:
+                    step["status"] = "fail"
+                    failures_this_turn += 1
+                    output_path = ""
+                    if output:
+                        stored = _store_long_output(output, "cmd_fail")
+                        display = _format_output_for_display(output)
+                        print(display)
+                        if stored:
+                            output_path = stored
+                            print(f"[full output saved to {stored}]")
+                    try:
+                        append_tool_entry({
+                            "command": step["cmd"],
+                            "cwd": str(Path.cwd()),
+                            "rc": step.get("rc"),
+                            "ok": ok,
+                            "duration_s": step.get("duration_s"),
+                            "stdout": step.get("stdout"),
+                            "stderr": step.get("stderr"),
+                            "output_path": output_path,
+                            "risk": step.get("risk"),
+                            "risk_reasons": step.get("risk_reasons"),
+                            "sandbox_mode": sandbox_mode,
+                            "approval_policy": approval_policy,
+                        })
+                    except Exception:
+                        pass
+                    try:
+                        st = load_state()
+                        st["last_command_summary"] = {
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "cmd": step.get("cmd"),
+                            "rc": step.get("rc"),
+                            "ok": False,
+                            "summary": chat_ui.shorten_output(output),
+                        }
+                        save_state(st)
+                    except Exception:
+                        pass
+                    logger.info("cmd_fail cmd=%s", step["cmd"])
+                    # Use researcher's diagnose_failure
+                    diagnosis = diagnose_failure(step["cmd"], output or "")
+                    print(f"\033[93mmartin (diagnosis): {diagnosis}\033[0m")
+                    try:
+                        if agent_mode:
+                            rerun_option = "yes"
+                        else:
+                            rerun_option = input("\033[92mmartin: Apply suggested fix commands now, or abort? (yes/no/abort)\033[0m ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        rerun_option = "no"
+                    if rerun_option == 'yes':
+                        interaction_history.append("martin (diagnosis): " + diagnosis)
+                        new_terminal_commands = extract_commands(diagnosis) # Use researcher's extract_commands
+                        if not new_terminal_commands:
+                            print("\033[93mmartin: Diagnosis included no runnable commands.\033[0m")
+                        else:
+                            print("\n\033[96mmartin: Proposed FIX commands (review):\033[0m")
+                            for i2, c2 in enumerate(new_terminal_commands, 1):
+                                print(f"  {i2}. {c2}")
+                            def _edit_fix_commands(cmds: List[str]) -> List[str]:
+                                edited = []
+                                for idx, c in enumerate(cmds, 1):
+                                    try:
+                                        repl = input(f"\033[93mEdit FIX command {idx} (enter to keep):\033[0m ").strip()
+                                    except (EOFError, KeyboardInterrupt):
+                                        repl = ""
+                                    edited.append(repl if repl else c)
+                                return edited
+                            try:
+                                if agent_mode or approval_policy in ("never", "on-failure"):
+                                    confirm_fix = "yes"
+                                else:
+                                    while True:
+                                        confirm_fix = input("\033[93mApprove running FIX commands? (yes/no/abort/edit/explain/dry-run)\033[0m ").strip().lower()
+                                        if confirm_fix == "explain":
+                                            print("\033[96mmartin: Rationale:\033[0m Fix commands proposed from diagnosis.")
+                                            try:
+                                                log_event(load_state(), "fix_command_decision", action="explain", count=len(new_terminal_commands))
+                                            except Exception:
+                                                pass
+                                            continue
+                                        if confirm_fix == "edit":
+                                            new_terminal_commands = _edit_fix_commands(new_terminal_commands)
+                                            try:
+                                                log_event(load_state(), "fix_command_decision", action="edit", count=len(new_terminal_commands))
+                                            except Exception:
+                                                pass
+                                            continue
+                                        if confirm_fix == "dry-run":
+                                            print("\033[92mmartin: Dry run only; fix commands not executed.\033[0m")
+                                            try:
+                                                log_event(load_state(), "fix_command_decision", action="dry-run", count=len(new_terminal_commands))
+                                            except Exception:
+                                                pass
+                                            new_terminal_commands = []
+                                            break
+                                        break
+                            except (EOFError, KeyboardInterrupt):
+                                confirm_fix = "no"
+                            if confirm_fix == "abort":
+                                print("\033[92mmartin: Aborting per request.\033[0m")
+                                try:
+                                    log_event(load_state(), "fix_command_decision", action="abort", count=len(new_terminal_commands))
+                                except Exception:
+                                    pass
+                                break
+                            elif confirm_fix == "yes":
+                                try:
+                                    log_event(load_state(), "fix_command_decision", action="yes", count=len(new_terminal_commands))
+                                except Exception:
+                                    pass
+                                for new_command in new_terminal_commands:
+                                    print(f"Executing (fix): {new_command}")
+                                    risk_fix = classify_command_risk(new_command, command_allowlist, command_denylist)
+                                    if risk_fix["level"] == "blocked":
+                                        ok2, out2, err2, rc2 = False, "", f"command blocked: {risk_fix['level']} ({', '.join(risk_fix['reasons'])})", 2
+                                    elif risk_fix["level"] == "high":
+                                        try:
+                                            confirm_high = input("\033[91mHigh-risk FIX command detected. Type YES to proceed:\033[0m ").strip().lower()
+                                        except (EOFError, KeyboardInterrupt):
+                                            confirm_high = "no"
+                                        if confirm_high != "yes":
+                                            ok2, out2, err2, rc2 = False, "", f"command blocked: {risk_fix['level']} ({', '.join(risk_fix['reasons'])})", 2
+                                        else:
+                                            allowed, reason = enforce_sandbox(new_command, sandbox_mode, str(Path.cwd()))
+                                            if not allowed:
+                                                if _maybe_override_sandbox(reason):
+                                                    ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                                else:
+                                                    ok2, out2, err2, rc2 = False, "", f"sandbox blocked: {reason}", 2
+                                            else:
+                                                ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                    else:
+                                        allowed, reason = enforce_sandbox(new_command, sandbox_mode, str(Path.cwd()))
+                                        if not allowed:
+                                            if _maybe_override_sandbox(reason):
+                                                ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                            else:
+                                                ok2, out2, err2, rc2 = False, "", f"sandbox blocked: {reason}", 2
+                                        else:
+                                            ok2, out2, err2, rc2 = run_command_smart_capture(new_command)
+                                    combined = out2
+                                    if err2:
+                                        combined = (out2 + "\n[stderr]\n" + err2).strip()
+                                    try:
+                                        append_tool_entry({
+                                            "command": new_command,
+                                            "cwd": str(Path.cwd()),
+                                            "rc": rc2,
+                                            "ok": ok2,
+                                            "duration_s": None,
+                                            "stdout": out2,
+                                            "stderr": err2,
+                                            "output_path": "",
+                                            "risk": risk_fix["level"],
+                                            "risk_reasons": risk_fix["reasons"],
+                                            "sandbox_mode": sandbox_mode,
+                                            "approval_policy": approval_policy,
+                                        })
+                                    except Exception:
+                                        pass
+                                    out2 = combined
+                                    if ok2:
+                                        successes_this_turn += 1
+                                    else:
+                                        failures_this_turn += 1
+                            else:
+                                print("\033[92mmartin: Fix not applied. Continuing.\033[0m")
+                                try:
+                                    log_event(load_state(), "fix_command_decision", action="no", count=len(new_terminal_commands))
+                                except Exception:
+                                    pass
+                    elif rerun_option == 'abort':
+                        print("\033[92mmartin: Aborting the operation.\033[0m")
+                        for rest in plan:
+                            if rest["status"] == "pending":
+                                rest["status"] = "skipped"
+                        break
+                    else:
+                        print("\033[92mmartin: Acknowledged - not applying fix.\033[0m")
+                sess.record_cmd(0 if ok else 1) # Record command outcome
+            bar.close()
+            print(f"\033[92mmartin: Turn complete - OK: {successes_this_turn}, FAIL: {failures_this_turn}\033[0m")
+            logger.info("chat_turn_complete ok=%d fail=%d", successes_this_turn, failures_this_turn)
+            try:
+                st = load_state()
+                st["last_plan"] = {"steps": terminal_commands, "status": "complete", "ok": successes_this_turn, "fail": failures_this_turn}
+                save_state(st)
+            except Exception:
+                pass
+
+    finally:
+        server.stop()
 
     if args.transcript:
         try:
@@ -1194,8 +1839,26 @@ def cmd_chat(cfg, args) -> int:
             save_state(st)
         except Exception:
             pass
+    try:
+        st = load_state()
+        st["resume_snapshot"] = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "last_path": _LAST_PATH,
+            "last_listing": _LAST_LISTING[:100],
+            "last_plan": st.get("last_plan", {}),
+            "context_cache": st.get("context_cache", {}),
+            "transcript_tail": session_transcript[-200:],
+            "cwd": str(Path.cwd()),
+        }
+        save_state(st)
+    except Exception:
+        pass
+    try:
+        if readline_mod and history_path:
+            readline_mod.write_history_file(str(history_path))
+    except Exception:
+        pass
     return 0
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="researcher CLI (skeleton)")
@@ -1275,14 +1938,16 @@ def add_plan_command(sub):
     p_plan.add_argument("prompt", nargs="*", help="Text containing command: lines (or use --stdin)")
     p_plan.add_argument("--stdin", action="store_true", help="Read prompt from stdin")
     p_plan.add_argument("--run", action="store_true", help="Run extracted commands (non-interactive)")
+    p_plan.add_argument("--dry-run", action="store_true", help="Print commands without executing")
     p_plan.add_argument("--timeout", type=int, default=120, help="Per-command timeout seconds")
     p_plan.set_defaults(func=handle_plan)
 
 
 def handle_plan(cfg, args) -> int:
-    from researcher.command_utils import extract_commands
+    from researcher.command_utils import extract_commands, classify_command_risk
     from researcher.orchestrator import dispatch_internal_ability
-    from researcher.runner import run_command_smart_capture
+    from researcher.runner import run_command_smart_capture, enforce_sandbox
+    from researcher.tool_ledger import append_tool_entry
     # logger = setup_logger(Path(cfg.get("data_paths", {}).get("logs", "logs")) / "local.log") # No longer needed directly here
     st = load_state() # Load state for logging
     prompt = read_prompt(args)
@@ -1304,10 +1969,54 @@ def handle_plan(cfg, args) -> int:
         print(f"  {i}. {c}")
     log_event(st, "plan_command_extracted", cmds_count=len(cmds)) # Use state_manager's log_event
     
+    if args.dry_run:
+        print("Dry run: commands extracted, no execution.")
+        return 0
     if args.run:
         # Replaced run_plan with execution loop using run_command_smart and dispatch_internal_ability
         results = []
         any_fail = False
+        exec_cfg = cfg.get("execution", {}) or {}
+        approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
+        sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
+        command_allowlist = exec_cfg.get("command_allowlist") or []
+        command_denylist = exec_cfg.get("command_denylist") or []
+        def _maybe_override_sandbox(block_reason: str) -> bool:
+            if approval_policy == "never":
+                return False
+            try:
+                resp = input(f"\033[93mmartin: Sandbox blocked this command ({block_reason}). Override once? (yes/no)\033[0m ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                resp = "no"
+            return resp == "yes"
+        if approval_policy == "on-request":
+            def _edit_commands(cmds: List[str]) -> List[str]:
+                edited = []
+                for idx, c in enumerate(cmds, 1):
+                    try:
+                        repl = input(f"\033[93mEdit command {idx} (enter to keep):\033[0m ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        repl = ""
+                    edited.append(repl if repl else c)
+                return edited
+            while True:
+                try:
+                    confirm_run = input("\033[93mApprove running this command plan? (yes/no/abort/edit/explain/dry-run)\033[0m ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    confirm_run = "no"
+                if confirm_run == "explain":
+                    print("\033[96mmartin: Rationale:\033[0m plan extracted from provided text.")
+                    continue
+                if confirm_run == "edit":
+                    cmds = _edit_commands(cmds)
+                    continue
+                if confirm_run == "dry-run":
+                    print("\033[92mmartin: Dry run only; no commands executed.\033[0m")
+                    return 0
+                break
+            if confirm_run != "yes":
+                print("\033[92mmartin: Aborting per approval policy.\033[0m")
+                return 1
         try:
             st = load_state()
             st["last_plan"] = {"steps": cmds, "status": "pending"}
@@ -1332,6 +2041,7 @@ def handle_plan(cfg, args) -> int:
                 return (key.strip(), payload.strip())
 
             ability_key, payload_txt = _parse_internal_cmd_for_plan(raw_cmd)
+            risk = {"level": "", "reasons": []}
             
             ok, output = False, ""
             stdout_text = ""
@@ -1345,7 +2055,63 @@ def handle_plan(cfg, args) -> int:
                 rc = 0 if ok else 1
                 stdout_text = output or ""
             else:
-                ok, stdout_text, stderr_text, rc = run_command_smart_capture(cmd_str)
+                risk = classify_command_risk(cmd_str, command_allowlist, command_denylist)
+                if risk["level"] == "blocked":
+                    ok = False
+                    rc = 2
+                    stdout_text = ""
+                    stderr_text = f"command blocked: {risk['level']} ({', '.join(risk['reasons'])})"
+                elif risk["level"] == "high":
+                    try:
+                        confirm_high = input("\033[91mHigh-risk command detected. Type YES to proceed:\033[0m ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        confirm_high = "no"
+                    if confirm_high != "yes":
+                        ok = False
+                        rc = 2
+                        stdout_text = ""
+                        stderr_text = f"command blocked: {risk['level']} ({', '.join(risk['reasons'])})"
+                    else:
+                        allowed, reason = enforce_sandbox(cmd_str, sandbox_mode, str(Path.cwd()))
+                        if not allowed:
+                            if _maybe_override_sandbox(reason):
+                                ok, stdout_text, stderr_text, rc = run_command_smart_capture(cmd_str)
+                            else:
+                                ok = False
+                                rc = 2
+                                stdout_text = ""
+                                stderr_text = f"sandbox blocked: {reason}"
+                        else:
+                            ok, stdout_text, stderr_text, rc = run_command_smart_capture(cmd_str)
+                else:
+                    allowed, reason = enforce_sandbox(cmd_str, sandbox_mode, str(Path.cwd()))
+                    if not allowed:
+                        if _maybe_override_sandbox(reason):
+                            ok, stdout_text, stderr_text, rc = run_command_smart_capture(cmd_str)
+                        else:
+                            ok = False
+                            rc = 2
+                            stdout_text = ""
+                            stderr_text = f"sandbox blocked: {reason}"
+                    else:
+                        ok, stdout_text, stderr_text, rc = run_command_smart_capture(cmd_str)
+            try:
+                append_tool_entry({
+                    "command": cmd_str,
+                    "cwd": str(Path.cwd()),
+                    "rc": rc,
+                    "ok": ok,
+                    "duration_s": None,
+                    "stdout": stdout_text,
+                    "stderr": stderr_text,
+                    "output_path": "",
+                    "risk": risk["level"] if not ability_key else "",
+                    "risk_reasons": risk["reasons"] if not ability_key else [],
+                    "sandbox_mode": sandbox_mode,
+                    "approval_policy": approval_policy,
+                })
+            except Exception:
+                pass
             
             results.append((cmd_str, rc, stdout_text + (("\n" + stderr_text) if stderr_text else "")))
             any_fail = any_fail or (rc != 0)
@@ -1390,6 +2156,7 @@ def add_supervise_command(sub):
     p_lib = sub.add_parser("librarian", help="Control the Librarian process")
     p_lib.add_argument("action", choices=["status", "start", "shutdown"], help="Action to perform")
     p_lib.add_argument("--debug", action="store_true", help="Start Librarian in debug mode")
+    p_lib.add_argument("--verbose", action="store_true", help="Verbose status diagnostics")
     p_lib.set_defaults(func=handle_librarian)
 
 
@@ -1427,6 +2194,34 @@ def handle_librarian(cfg, args) -> int:
     client = LibrarianClient()
     if args.action == "status":
         resp = client.get_status()
+        if getattr(args, "verbose", False):
+            import time as _time
+            t0 = _time.time()
+            ping = client.get_status()
+            latency_ms = int((_time.time() - t0) * 1000)
+            resp = {
+                "status": resp.get("status"),
+                "message": resp.get("message"),
+                "latency_ms": latency_ms,
+                "cloud_configured": bool(os.environ.get("RESEARCHER_CLOUD_API_KEY") or os.environ.get("OPENAI_API_KEY")),
+            }
+            try:
+                last_error = None
+                if LEDGER_FILE.exists():
+                    with open(LEDGER_FILE, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    for line in reversed(lines):
+                        try:
+                            record = json.loads(line)
+                            entry = record.get("entry", {})
+                            if entry.get("event") == "librarian_error":
+                                last_error = entry.get("data", {})
+                                break
+                        except Exception:
+                            continue
+                resp["last_error"] = last_error
+            except Exception:
+                resp["last_error"] = None
         print(resp)
         client.close()
         return 0 if resp.get("status") == "success" else 1

@@ -20,7 +20,7 @@ def _ensure_dirs() -> None:
 
 def _now_iso() -> str:
     """Returns the current UTC time in ISO 8601 format."""
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
 
 def _sha256_bytes(b: bytes) -> str:
     """Computes the SHA256 hash of a bytes object."""
@@ -61,7 +61,10 @@ DEFAULT_STATE: Dict[str, Any] = {
         "python": ".".join(map(str, (os.sys.version_info.major, os.sys.version_info.minor, os.sys.version_info.micro))),
     },
     "ledger": {"entries": 0, "last_hash": None},
+    "tool_ledger": {"entries": 0, "last_hash": None},
     "workspace": {"path": "./workspace", "last_file": ""}
+    ,
+    "tasks": []
 }
 
 def load_state() -> Dict[str, Any]:
@@ -73,6 +76,8 @@ def load_state() -> Dict[str, Any]:
             st[k] = v
     if "ledger" not in st: # Special handling for nested dict
         st["ledger"] = {"entries": 0, "last_hash": None}
+    if "tool_ledger" not in st:
+        st["tool_ledger"] = {"entries": 0, "last_hash": None}
     # Update platform info on load as it might change
     st["platform"] = DEFAULT_STATE["platform"]
     return st
