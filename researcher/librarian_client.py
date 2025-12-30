@@ -211,6 +211,16 @@ class LibrarianClient:
         self.close()
         return response
 
+    def cancel_request(self, request_id: str) -> Dict[str, Any]:
+        """Attempts to cancel a long-running request on the Librarian."""
+        if not request_id:
+            return {"status": "error", "message": "missing request_id"}
+        message = {
+            "type": "cancel_request",
+            "request_id": request_id,
+        }
+        return self._send_receive(message)
+
 if __name__ == "__main__":
     # Example usage for testing purposes
     print("--- LibrarianClient Test (Raw Socket) ---")

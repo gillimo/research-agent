@@ -144,7 +144,10 @@ class Librarian:
 
     def _log(self, message: str, level: str = "info", **data: Any) -> None:
         event_data = {"component": "librarian", "message": message, **data}
-        log_event(self.state, f"librarian_{level}", **event_data)
+        try:
+            log_event(self.state, f"librarian_{level}", **event_data)
+        except Exception:
+            pass
         if self.debug_mode:
             print(f"[Librarian {level.upper()}] {message} {json.dumps(data) if data else ''}")
 
@@ -172,7 +175,7 @@ class Librarian:
 
     def _handle_ingest_text(self, text: str, topic: str, source: str) -> Dict[str, Any]:
         if not text:
-            return {"status": "error", "message": "Missing text for ingest_text"}
+            return {"status": "error", "message": "Missing text for ingest_text", "code": "invalid_payload"}
         notes_dir = (ROOT_DIR / "data" / "processed" / "librarian_notes")
         notes_dir.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
@@ -207,11 +210,11 @@ class Librarian:
         topic = message.get("topic", "").strip() or "librarian_note"
         source = message.get("source", "librarian_note")
         if not request_id or not chunk:
-            return {"status": "error", "message": "Missing chunk payload"}
+            return {"status": "error", "message": "Missing chunk payload", "code": "invalid_payload"}
         if total_chunks <= 0 or total_chunks > MAX_CHUNKS:
-            return {"status": "error", "message": "Invalid total_chunks"}
+            return {"status": "error", "message": "Invalid total_chunks", "code": "invalid_payload"}
         if chunk_index < 0 or chunk_index >= total_chunks:
-            return {"status": "error", "message": "Invalid chunk_index"}
+            return {"status": "error", "message": "Invalid chunk_index", "code": "invalid_payload"}
 
         buf = self._chunk_buffers.get(request_id)
         if not buf:
@@ -223,7 +226,7 @@ class Librarian:
             }
             self._chunk_buffers[request_id] = buf
         if total_chunks != len(buf["chunks"]):
-            return {"status": "error", "message": "Chunk count mismatch"}
+            return {"status": "error", "message": "Chunk count mismatch", "code": "invalid_payload"}
 
         buf["chunks"][chunk_index] = chunk
         if all(part is not None for part in buf["chunks"]):
@@ -274,8 +277,14 @@ class Librarian:
         request_id = message.get("request_id")
         self._log("Received IPC message", message_type=message.get("type"), request_id=request_id)
         if message.get("protocol_version") != PROTOCOL_VERSION:
-            return {"status": "error", "message": "Protocol version mismatch.", "protocol_version": PROTOCOL_VERSION, "request_id": request_id}
-        response: Dict[str, Any] = {"status": "error", "message": "Unknown message type"}
+            return {
+                "status": "error",
+                "message": "Protocol version mismatch.",
+                "code": "protocol_mismatch",
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": request_id,
+            }
+        response: Dict[str, Any] = {"status": "error", "message": "Unknown message type", "code": "unknown_message"}
         msg_type = message.get("type")
         self.last_request_ts = _now_ts()
 
@@ -294,15 +303,18 @@ class Librarian:
                 "cloud_breaker_until": self.cloud_breaker_until,
             }
         elif msg_type == "cloud_query":
-            prompt = message.get("prompt", "")
-            cmd_template = message.get("cloud_cmd")
-            result: CloudCallResult = self._call_cloud_with_policy(prompt=prompt, cmd_template=cmd_template)
-            response = {"status": "success" if result.ok else "error", "result": result.__dict__}
+            if message.get("sanitized") is not True:
+                response = {"status": "error", "message": "sanitized prompt required", "code": "sanitize_required"}
+            else:
+                prompt = message.get("prompt", "")
+                cmd_template = message.get("cloud_cmd")
+                result: CloudCallResult = self._call_cloud_with_policy(prompt=prompt, cmd_template=cmd_template)
+                response = {"status": "success" if result.ok else "error", "result": result.__dict__}
         elif msg_type == "research_request":
             topic = message.get("topic", "").strip()
             intent = message.get("intent", "rag_update")
             if not topic:
-                response = {"status": "error", "message": "Missing topic for research_request"}
+                response = {"status": "error", "message": "Missing topic for research_request", "code": "invalid_payload"}
             else:
                 prompt = (
                     "You are the Librarian agent collaborating with Martin. "
@@ -331,7 +343,7 @@ class Librarian:
         elif msg_type == "sources_request":
             topic = message.get("topic", "").strip()
             if not topic:
-                response = {"status": "error", "message": "Missing topic for sources_request"}
+                response = {"status": "error", "message": "Missing topic for sources_request", "code": "invalid_payload"}
             else:
                 prompt = (
                     "You are the Librarian agent collaborating with Martin. "
@@ -363,6 +375,13 @@ class Librarian:
             response = self._handle_ingest_text(text, topic, source)
         elif msg_type == "ingest_text_chunk":
             response = self._handle_ingest_chunk(message)
+        elif msg_type == "cancel_request":
+            target = message.get("target_request_id") or message.get("request_id")
+            if target and target in self._chunk_buffers:
+                self._chunk_buffers.pop(target, None)
+                response = {"status": "success", "message": "request canceled"}
+            else:
+                response = {"status": "error", "message": "request not found", "code": "not_found"}
         elif msg_type == "ingest_request":
             paths_str: List[str] = message.get("paths", [])
             idx = load_index_from_config(self.cfg)
@@ -400,6 +419,7 @@ class Librarian:
                     response_data = {
                         "status": "error",
                         "message": "payload too large",
+                        "code": "payload_too_large",
                         "protocol_version": PROTOCOL_VERSION,
                     }
                     resp_json = json.dumps(response_data).encode('utf-8')
@@ -415,12 +435,14 @@ class Librarian:
                         raise ConnectionError("Client closed connection unexpectedly.")
                     msg_bytes += chunk
                 
+                start_ts = time.time()
                 message = json.loads(msg_bytes.decode('utf-8'))
                 if self.allowlist and addr[0] not in self.allowlist:
                     self._log("Rejected IPC client (allowlist)", level="warn", client=addr[0])
                     response_data = {
                         "status": "error",
                         "message": "Unauthorized host",
+                        "code": "unauthorized_host",
                         "protocol_version": PROTOCOL_VERSION,
                         "request_id": message.get("request_id"),
                     }
@@ -430,6 +452,7 @@ class Librarian:
                         response_data = {
                             "status": "error",
                             "message": "Unauthorized",
+                            "code": "unauthorized",
                             "protocol_version": PROTOCOL_VERSION,
                             "request_id": message.get("request_id"),
                         }
@@ -441,6 +464,21 @@ class Librarian:
                 resp_json = json.dumps(response_data).encode('utf-8')
                 resp_len = struct.pack('!I', len(resp_json))
                 conn.sendall(resp_len + resp_json)
+                try:
+                    duration_ms = int((time.time() - start_ts) * 1000)
+                    log_event(
+                        self.state,
+                        "librarian_ipc",
+                        request_id=message.get("request_id"),
+                        message_type=message.get("type"),
+                        status=response_data.get("status"),
+                        code=response_data.get("code"),
+                        msg_bytes=msg_len,
+                        resp_bytes=len(resp_json),
+                        duration_ms=duration_ms,
+                    )
+                except Exception:
+                    pass
 
                 if message.get("type") == "shutdown":
                     break

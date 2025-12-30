@@ -12,6 +12,7 @@ Prereqs
 - IPC auth (recommended): set `LIBRARIAN_IPC_TOKEN` in the environment for both Martin and the Librarian to require authenticated TCP messages.
 - IPC allowlist (optional): set `LIBRARIAN_IPC_ALLOWLIST=127.0.0.1,::1` to limit IPC clients by host/IP.
 - IPC limits (optional): set `LIBRARIAN_IPC_MAX_BYTES` and `LIBRARIAN_IPC_CHUNK_BYTES` to cap message size and chunk large ingest payloads.
+- IPC retention (optional): set `LIBRARIAN_INBOX_MAX` and `LIBRARIAN_INBOX_RETENTION_DAYS` to cap inbox size and age.
 
 Environment layout
 - Clone/open `C:\Users\gilli\OneDrive\Desktop\research_agent`.

@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import os
 import sys
@@ -592,11 +593,30 @@ def cmd_chat(cfg, args) -> int:
             inbox = st.get("librarian_inbox", [])
             if not isinstance(inbox, list):
                 inbox = []
+            max_items = int(os.environ.get("LIBRARIAN_INBOX_MAX", "50"))
+            retention_days = int(os.environ.get("LIBRARIAN_INBOX_RETENTION_DAYS", "14"))
+            cutoff = None
+            if retention_days > 0:
+                try:
+                    cutoff = time.time() - (retention_days * 86400)
+                except Exception:
+                    cutoff = None
             inbox.append({
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "message": message,
             })
-            st["librarian_inbox"] = inbox[-50:]
+            if cutoff:
+                pruned = []
+                for item in inbox:
+                    ts = item.get("ts", "")
+                    try:
+                        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        if dt.timestamp() >= cutoff:
+                            pruned.append(item)
+                    except Exception:
+                        pruned.append(item)
+                inbox = pruned
+            st["librarian_inbox"] = inbox[-max_items:]
             st["librarian_unread"] = True
             save_state(st)
         except Exception:

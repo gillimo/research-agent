@@ -4,11 +4,11 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) CL7: IPC timeout/cancel support
-2) CL8: IPC error taxonomy
-3) CL9: Sanitization assertions at boundaries
-4) CL11: Structured IPC logging
-5) CL12: Inbox retention policy
+1) CL13: Librarian trust scoring
+2) CL14: RAG source expiry + refresh
+3) CL15: Sanitized query templates
+4) CL17: Passive gap note dedupe + rate limits
+5) CL18: Adaptive heartbeat payload
 
 
 P0 – Safety/Secrets
@@ -415,15 +415,15 @@ Notes: protocol_version enforced on Librarian IPC requests/responses.
   Standardize retry policy with circuit breaker on repeated failures.  
   Acceptance: backoff logged; breaker prevents spam.  
   Deps: L1.
-- [ ] CL7: IPC timeout/cancel support  
+- [x] CL7: IPC timeout/cancel support  
   Allow Martin to cancel long-running Librarian tasks.  
   Acceptance: cancel message stops work and logs outcome.  
   Deps: CL2.
-- [ ] CL8: IPC error taxonomy  
+- [x] CL8: IPC error taxonomy  
   Define structured error codes (timeout, sanitize_block, invalid_payload, etc.).  
   Acceptance: errors include code + message; tests verify.  
   Deps: CL1.
-- [ ] CL9: Sanitization assertions at boundaries  
+- [x] CL9: Sanitization assertions at boundaries  
   Enforce redaction flags and verify sanitized prompts before egress.  
   Acceptance: both client and server assert `sanitized=true` on cloud calls.  
   Deps: CX33.
@@ -431,11 +431,11 @@ Notes: protocol_version enforced on Librarian IPC requests/responses.
   Validate ingest paths/text sources against allowlist rules.  
   Acceptance: invalid paths are rejected and logged.  
   Deps: C2.
-- [ ] CL11: Structured IPC logging  
+- [x] CL11: Structured IPC logging  
   Log IPC request/response summaries with redaction hashes.  
   Acceptance: logs include request_id, sizes, and duration.  
   Deps: CL2.
-- [ ] CL12: Inbox retention policy  
+- [x] CL12: Inbox retention policy  
   Add retention and truncation policy for Librarian inbox items.  
   Acceptance: inbox capped and old entries archived.  
   Deps: L5.
