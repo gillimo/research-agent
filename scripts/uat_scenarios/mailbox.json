@@ -33,7 +33,8 @@
     },
     {
       "input": "no",
-      "input_timeout": 10
+      "input_timeout": 10,
+      "input_when_text": "Approve running"
     },
     {
       "wait_for": "Command touches outside workspace",
@@ -41,7 +42,8 @@
     },
     {
       "input": "no",
-      "input_timeout": 10
+      "input_timeout": 10,
+      "input_when_text": "Command touches outside workspace"
     },
     {
       "wait_for": "Done. OK",

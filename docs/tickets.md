@@ -731,6 +731,12 @@ P20 ? UAT harness stability
 - [x] UAT27: Conditional input support  
   Allow steps to send inputs only when specific prompt text or events appear.  
   Acceptance: scenarios can skip approval responses when prompts do not appear.
+- [x] UAT28: De-duplicate socket event log  
+  Avoid logging both raw and cleaned socket output in `event_log`.  
+  Acceptance: each socket output appears once in `logs/uat_events.ndjson`.
+- [x] UAT29: Gate approval responses in mailbox mode  
+  Add `input_when_text` on approval prompts so mailbox runs don’t send early answers.  
+  Acceptance: approval responses only send after the prompt appears.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

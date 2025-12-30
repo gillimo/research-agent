@@ -278,6 +278,7 @@ def main() -> int:
                 text = payload.get("text")
                 if os.environ.get("MARTIN_TEST_SOCKET_DEBUG") == "1":
                     print(f"[event] {msg_type}")
+                logged_event = False
                 if isinstance(text, str):
                     cleaned = _strip_ansi(text)
                     with output_lock:
@@ -291,10 +292,12 @@ def main() -> int:
                         print(text, end="")
                     _append_log(mailbox_log, {"ts": time.time(), "type": msg_type or "socket", "text": cleaned})
                     _append_log(event_log, {"ts": time.time(), "type": msg_type or "socket", "text": cleaned})
+                    logged_event = True
                 if msg_type:
                     with event_lock:
                         event_buffer.append({"ts": time.time(), "type": msg_type, "text": text})
-                    _append_log(event_log, {"ts": time.time(), "type": msg_type, "text": text})
+                    if not logged_event:
+                        _append_log(event_log, {"ts": time.time(), "type": msg_type, "text": text})
                 if msg_type == "output":
                     socket_output_seen.set()
                 if msg_type == "prompt":
