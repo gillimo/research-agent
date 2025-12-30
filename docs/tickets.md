@@ -749,6 +749,9 @@ P20 ? UAT harness stability
 - [x] UAT33: Respect scenario mailbox_duration  
   Allow mailbox scenarios to override the default mailbox duration.  
   Acceptance: mailbox runs honor `mailbox_duration` in scenario JSON.
+- [x] UAT34: Scope conditional inputs to new output  
+  Track output/event cursors for pending inputs so conditions match only new output.  
+  Acceptance: deferred inputs do not trigger on stale output.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

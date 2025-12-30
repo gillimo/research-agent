@@ -335,18 +335,28 @@ def main() -> int:
         proc.stdin.write(text + "\n")
         proc.stdin.flush()
 
-    def _conditions_met(wait_text: Any, wait_event: Any) -> bool:
+    def _conditions_met(
+        wait_text: Any,
+        wait_event: Any,
+        output_pos: Optional[int] = None,
+        event_pos: Optional[int] = None,
+    ) -> bool:
         if wait_text:
             tokens = [wait_text] if isinstance(wait_text, str) else list(wait_text)
             with output_lock:
                 blob = "".join(output_buffer)
+            if output_pos is not None:
+                blob = blob[output_pos:]
             for token in tokens:
                 if token and token not in blob:
                     return False
         if wait_event:
             tokens = [wait_event] if isinstance(wait_event, str) else list(wait_event)
             with event_lock:
-                seen = {payload.get("type") for payload in event_buffer}
+                if event_pos is None:
+                    seen = {payload.get("type") for payload in event_buffer}
+                else:
+                    seen = {payload.get("type") for payload in event_buffer[event_pos:]}
             for token in tokens:
                 if token not in seen:
                     return False
@@ -357,7 +367,12 @@ def main() -> int:
             return
         remaining: List[Dict[str, Any]] = []
         for item in pending_inputs:
-            if _conditions_met(item.get("input_when_text"), item.get("input_when_event")):
+            if _conditions_met(
+                item.get("input_when_text"),
+                item.get("input_when_event"),
+                item.get("output_pos"),
+                item.get("event_pos"),
+            ):
                 _send(item["input"])
             else:
                 remaining.append(item)
@@ -411,11 +426,17 @@ def main() -> int:
                 if not _conditions_met(None, input_when_event):
                     should_send = False
             if not should_send:
+                with output_lock:
+                    output_pos = len("".join(output_buffer))
+                with event_lock:
+                    event_pos = len(event_buffer)
                 pending_inputs.append(
                     {
                         "input": text,
                         "input_when_text": input_when_text,
                         "input_when_event": input_when_event,
+                        "output_pos": output_pos,
+                        "event_pos": event_pos,
                     }
                 )
                 continue
