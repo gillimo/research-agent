@@ -220,6 +220,8 @@ def main() -> int:
     event_lock = threading.Lock()
     socket_output_seen = threading.Event()
     pending_inputs: List[Dict[str, Any]] = []
+    consumed_text_counts: Dict[str, int] = {}
+    consumed_event_counts: Dict[str, int] = {}
     socket_conn = None
     socket_reader = None
     prompt_event = threading.Event()
@@ -335,41 +337,60 @@ def main() -> int:
         proc.stdin.write(text + "\n")
         proc.stdin.flush()
 
+    def _count_text_matches(token: str) -> int:
+        if not token:
+            return 0
+        with output_lock:
+            blob = "".join(output_buffer)
+        count = blob.count(token)
+        prompt_texts: List[str] = []
+        with event_lock:
+            for payload in event_buffer:
+                if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
+                    prompt_texts.append(payload.get("text") or "")
+        for text in prompt_texts:
+            if token in text:
+                count += text.count(token)
+        return count
+
+    def _count_event_matches(token: str) -> int:
+        if not token:
+            return 0
+        with event_lock:
+            return sum(1 for payload in event_buffer if payload.get("type") == token)
+
+    def _baseline_counts(tokens: List[str], counter) -> Dict[str, int]:
+        baseline: Dict[str, int] = {}
+        for token in tokens:
+            if token:
+                baseline[token] = counter(token)
+        return baseline
+
     def _conditions_met(
         wait_text: Any,
         wait_event: Any,
-        output_pos: Optional[int] = None,
-        event_pos: Optional[int] = None,
+        baseline_text: Optional[Dict[str, int]] = None,
+        baseline_event: Optional[Dict[str, int]] = None,
     ) -> bool:
         if wait_text:
             tokens = [wait_text] if isinstance(wait_text, str) else list(wait_text)
-            with output_lock:
-                blob = "".join(output_buffer)
-            if output_pos is not None:
-                blob = blob[output_pos:]
-            prompt_texts: List[str] = []
-            with event_lock:
-                events = event_buffer if event_pos is None else event_buffer[event_pos:]
-                for payload in events:
-                    if payload.get("type") == "prompt" and isinstance(payload.get("text"), str):
-                        prompt_texts.append(payload.get("text") or "")
             for token in tokens:
                 if not token:
                     continue
-                if token in blob:
-                    continue
-                if any(token in text for text in prompt_texts):
-                    continue
-                return False
+                total = _count_text_matches(token)
+                baseline = 0 if not baseline_text else baseline_text.get(token, 0)
+                consumed = consumed_text_counts.get(token, 0)
+                if total <= max(baseline, consumed):
+                    return False
         if wait_event:
             tokens = [wait_event] if isinstance(wait_event, str) else list(wait_event)
-            with event_lock:
-                if event_pos is None:
-                    seen = {payload.get("type") for payload in event_buffer}
-                else:
-                    seen = {payload.get("type") for payload in event_buffer[event_pos:]}
             for token in tokens:
-                if token not in seen:
+                if not token:
+                    continue
+                total = _count_event_matches(token)
+                baseline = 0 if not baseline_event else baseline_event.get(token, 0)
+                consumed = consumed_event_counts.get(token, 0)
+                if total <= max(baseline, consumed):
                     return False
         return True
 
@@ -381,10 +402,14 @@ def main() -> int:
             if _conditions_met(
                 item.get("input_when_text"),
                 item.get("input_when_event"),
-                item.get("output_pos"),
-                item.get("event_pos"),
+                item.get("baseline_text"),
+                item.get("baseline_event"),
             ):
                 _send(item["input"])
+                for token in item.get("baseline_text", {}):
+                    consumed_text_counts[token] = consumed_text_counts.get(token, 0) + 1
+                for token in item.get("baseline_event", {}):
+                    consumed_event_counts[token] = consumed_event_counts.get(token, 0) + 1
             else:
                 remaining.append(item)
         pending_inputs[:] = remaining
@@ -439,17 +464,15 @@ def main() -> int:
                 if not _conditions_met(None, input_when_event):
                     should_send = False
             if not should_send:
-                with output_lock:
-                    output_pos = len("".join(output_buffer))
-                with event_lock:
-                    event_pos = len(event_buffer)
+                text_tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
+                event_tokens = [input_when_event] if isinstance(input_when_event, str) else list(input_when_event or [])
                 pending_inputs.append(
                     {
                         "input": text,
                         "input_when_text": input_when_text,
                         "input_when_event": input_when_event,
-                        "output_pos": output_pos,
-                        "event_pos": event_pos,
+                        "baseline_text": _baseline_counts(text_tokens, _count_text_matches),
+                        "baseline_event": _baseline_counts(event_tokens, _count_event_matches),
                     }
                 )
                 continue

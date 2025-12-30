@@ -758,6 +758,9 @@ P20 ? UAT harness stability
 - [x] UAT36: Prompt-aware conditional checks  
   Treat matching prompt event text as satisfying `input_when_text`.  
   Acceptance: conditional inputs fire when their prompt appears, not on stale output.
+- [x] UAT37: Consume conditional matches  
+  Track baseline and consumed counts for prompt tokens so repeated prompts can be handled in order.  
+  Acceptance: multiple `input_when_text` entries for the same token no longer fire on the first prompt.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  
