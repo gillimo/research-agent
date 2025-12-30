@@ -1,13 +1,39 @@
 Bug Log
 =======
 
+- 2025-12-30: UAT harness duplicated output in socket mode because stdout + socket streams were both captured; disabled stdout capture when socket mode is active.
+- 2025-12-30: ANSI prompt auto-wait was untested; added a harness test to cover ANSI prompt stripping and prompt regex matching.
+- 2025-12-30: Mailbox mode needed to avoid blocking waits and exit after a short window; harness now skips waits and auto-quits after `mailbox_duration`.
+- 2025-12-30: Test socket mode skipped context auto-surface and initial context harvest, creating behavior differences; removed the test-only bypass so behavior matches real sessions.
+- 2025-12-30: UAT harness could only wait on text output, making socket tests brittle; added event-based waits (`wait_for_event`) to align with prompt/input events.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
-- 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Occurs when SimpleIndex is active; needs explicit save path.
+- 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.
 - 2025-12-30: Chat auto-ingest crashed due to missing `re` import in `researcher/cli.py`; added import.
+- 2025-12-30: CLI crashes were not captured in `logs/outputs` when an unhandled exception occurred; added top-level crash logging to write a `_crash.log`.
+- 2025-12-30: `pytest` not found when running tests in repo; mitigated by `python -m pytest -q` and `/verify` guidance.
+- 2025-12-30: `.venv` is missing (`.venv\\Scripts\\python.exe` not found), so tests cannot run until bootstrap installs deps; mitigated by `scripts/install_martin.ps1` and `scripts/run_tests.ps1`.
+- 2025-12-30: `scripts/install_martin.ps1` timed out during pip install on this machine; mitigated with `-SkipDeps` and verification doc guidance.
+- 2025-12-30: `scripts/run_tests.ps1` timed out during pip install/pytest; mitigated with `-SkipInstall` and verification doc guidance.
+- 2025-12-30: `pytest` not on PATH in shell; use `python -m pytest -q` (tests pass).
+- 2025-12-30: Behavior debugging is weak because `logs/martin.log` only stores `chat_input len` with no sanitized summaries or assistant decisions; fixed via verbose sanitized summaries and decision logging.
+- 2025-12-30: Local-only sessions still emit `cloud_call_start` and `cloud_call_fail_no_config` events in the ledger, causing noisy backoff cycles; fixed by short-circuiting cloud calls in Librarian when local-only.
+- 2025-12-30: Librarian notifications blocked by local-only are logged in the ledger but not surfaced clearly in chat UX; added a concise notice when such notes arrive.
+- 2025-12-30: Footer banner renders twice after responses because `_render_footer()` is called twice in chat; causes duplicate status output.
+- 2025-12-30: UAT socket harness auto-wait can hang because prompt detection does not normalize ANSI prompts; needs prompt token normalization or explicit prompt events.
+- 2025-12-30: UAT socket harness duplicates output in socket mode (stdout + socket stream), which can cause repeated content and false prompt matches.
+- 2025-12-30: Test socket input can deadlock if MARTIN_TEST_SOCKET is enabled but the harness fails to connect; CLI blocks on socket queue.
+- 2025-12-30: Test socket has no auth token/handshake and allows any local client to inject input; should be gated or locked to loopback-only.
+- 2025-12-30: UAT socket harness timed out in practice because prompts are ANSI-colored and not emitted as explicit socket events; auto-wait never detects readiness.
+- 2025-12-30: Socket harness has no readiness banner or "prompt ready" event, so it cannot reliably know when the CLI expects input.
+- 2025-12-30: Test socket input messages are not consumed by the CLI; harness sends inputs but no input_ack or state advance is observed, leaving the CLI blocked at prompts.
+- 2025-12-30: Footer banner rendered twice after responses; removed duplicate render call in chat flow.
+- 2025-12-30: CLI crashed in socket UAT because `get_system_context` was referenced without import; added top-level import.
+- 2025-12-30: Socket UAT can time out if context/resume delays input consumption; harness now waits on input_used with configurable timeout.
+- 2025-12-30: Socket UAT needs async mailbox mode; blocking waits make it hard to test like a user. Added mailbox logging support.
 - 2025-12-29: Windows cmd_template parsing kept quotes in argv, causing FileNotFoundError; stripped wrapped quotes in parser.
 - 2025-12-29: TUI preflight f-string syntax error in `researcher/tui_shell.py` caused pytest collection failure; fixed.
-- 2025-12-19: Agent lacks conversational context retention, gets sidetracked easily, and provides unhelpful responses due to apparent lack of understanding. This is a critical usability issue for the CLI tool.
+- 2025-12-19: Agent lacks conversational context retention, gets sidetracked easily, and provides unhelpful responses due to apparent lack of understanding. Mitigated by goal thread persistence, follow-up resolver, and active context block.
 - 2025-12-18: Sanitization regexes not redacting email/path; fixed patterns for emails and Windows paths in `researcher/sanitize.py`.
 - 2025-12-18: Tests failed initially due to missing pytest install; added `requirements.txt` and installed dependencies.
 - 2025-12-18: Pydantic regex deprecated; switched to `pattern` in `schemas.py`. Added ingestion/chunking path and logging stub; pytest suite now green.

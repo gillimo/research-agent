@@ -4,11 +4,10 @@ Ticket Backlog (priority, deps, status)
 Legend: [ ] todo, [~] in progress, [x] done
 
 Next Priority Order
-1) FG1: Workspace write hard-block option
-2) FG2: External editor provenance hook
-3) FG3: Centralized file-write policy gate for IPC ingest
-4) G3: Proprietary data scanner for ingest
-5) CL10: Ingest allowlist validation
+1) UAT9: Add event-based waits to socket harness scenarios
+2) UAT8: Add parity check for test socket mode (no behavior changes)
+3) G4V: Verify host bootstrap script on clean machine
+4) G5V: Verify service script on clean machine
 
 
 P0 – Safety/Secrets
@@ -427,7 +426,7 @@ Notes: protocol_version enforced on Librarian IPC requests/responses.
   Enforce redaction flags and verify sanitized prompts before egress.  
   Acceptance: both client and server assert `sanitized=true` on cloud calls.  
   Deps: CX33.
-- [ ] CL10: Ingest allowlist validation  
+- [x] CL10: Ingest allowlist validation  
   Validate ingest paths/text sources against allowlist rules.  
   Acceptance: invalid paths are rejected and logged.  
   Deps: C2.
@@ -475,27 +474,27 @@ P15 ? Project goal completion (local control + proprietary safety)
   Show sanitized cloud prompt and require approval before sending.  
   Acceptance: user can approve/deny per cloud call.  
   Deps: CX14, CX33.
-- [ ] G3: Proprietary data scanner for ingest  
+- [x] G3: Proprietary data scanner for ingest  
   Scan for secrets/PII in ingested docs; warn or block.  
   Acceptance: scanner logs and respects allow/deny rules.  
   Deps: F2.
-- [ ] G4: Host bootstrap script  
+- [x] G4: Host bootstrap script  
   One-command install to set up Martin on a new machine (venv + deps + config).  
   Acceptance: bootstrap script works on Windows and documents steps.  
   Deps: Q2.
-- [ ] G5: Background service/daemon  
+- [x] G5: Background service/daemon  
   Optional service mode to run Martin/Librarian persistently.  
   Acceptance: service starts/stops and logs status.  
   Deps: L1.
-- [ ] G6: Remote session handoff  
+- [x] G6: Remote session handoff  
   Export/import session context to move Martin between machines.  
   Acceptance: `/export session` can be imported safely on another host.  
   Deps: CX26.
-- [ ] G7: Trust policy config  
+- [x] G7: Trust policy config  
   Central policy file for what can leave the machine and under what conditions.  
   Acceptance: policy enforced by sanitizer + IPC + cloud bridge.  
   Deps: CX33.
-- [ ] G8: Redaction audit report  
+- [x] G8: Redaction audit report  
   Generate a report of redaction decisions over time.  
   Acceptance: CLI can export a redaction audit summary.  
   Deps: CX12, CX20.
@@ -505,30 +504,91 @@ P15 ? Project goal completion (local control + proprietary safety)
   Notes: starter RAG docs added under `docs/starter_rag`.  
   Deps: C2, DOC3.
 
-- [ ] G10: Remote pairing + device registry  
+- [x] G10: Remote pairing + device registry  
   Register machines and pair Martin to hosts with explicit approval.  
   Acceptance: device list stored locally; pairing requires user confirmation.  
   Deps: L1, CX13.
-- [ ] G11: Secure remote transport  
+- [x] G11: Secure remote transport  
   Encrypted channel for remote control (mTLS or SSH tunnel).  
   Acceptance: remote commands travel over authenticated encrypted transport.  
   Deps: G10.
-- [ ] G12: Remote command relay policy  
+- [x] G16: Remote tunnel CLI helper  
+  Provide `/remote start|stop|status` to manage the transport process.  
+  Acceptance: tunnel status can be queried and PID tracked locally.
+- [x] G12: Remote command relay policy  
   Enforce the same sandbox/approval policies on remote hosts.  
   Acceptance: policy violations block remote execution with clear logs.  
   Deps: G11, CX13.
-- [ ] G13: Multi-host UX  
+- [x] G13: Multi-host UX  
   Allow switching target host and show active host in the banner.  
   Acceptance: `/host list|use <id>` works and banner shows host.  
   Deps: G10.
-- [ ] G14: Remote data protection  
+- [x] G14: Remote data protection  
   Encrypt at-rest logs and caches on remote hosts and sync redaction rules.  
   Acceptance: remote logs are encrypted and follow trust policy.  
   Deps: G11, G7.
-- [ ] G15: RAG trust labeling  
+- [x] G17: Encrypted export bundles  
+  Encrypt session/tool ledger exports when remote or policy requires.  
+  Acceptance: exports are written as `.enc` when encryption is enabled.
+- [x] G15: RAG trust labeling  
   Label RAG sources by trust level and enforce retrieval constraints.  
   Acceptance: sources marked public/internal and filtered by policy.  
   Deps: G7, C2.
+
+- [ ] G4V: Verify host bootstrap script on clean machine  
+  Run `scripts/install_martin.ps1` on a clean machine and confirm venv + deps + shim.  
+  Acceptance: install succeeds and `martin` launches without manual steps.  
+  Notes: local run timed out during pip install; venv created.  
+  Deps: G4.
+- [ ] G5V: Verify service script on clean machine  
+  Validate `scripts/martin_service.ps1 start|stop|status` on a clean machine.  
+  Acceptance: service starts/stops and PID tracking works.  
+  Notes: local run timed out while running `scripts/run_tests.ps1`; clean-machine verification pending.  
+  Deps: G5.
+- [x] G23: Add verification checklist command  
+  Add `/verify` to print a checklist for bootstrap/service/pytest and venv status.  
+  Acceptance: command reports missing items and suggests next steps.
+- [x] G24: Add onboarding verification doc  
+  Document clean-machine verification steps for install/service/tests.  
+  Acceptance: doc covers bootstrap, service, and test commands.
+- [x] G25: Add test runner script for venv setup  
+  Add `scripts/run_tests.ps1` to ensure venv + pytest and run tests.  
+  Acceptance: tests run from a clean machine after script execution.
+- [x] G26: Add verification checklist to onboarding  
+  Include `/verify` in the onboarding checklist.  
+  Acceptance: onboarding prompt references `/verify`.
+- [x] G27: Add verification docs to CLI UX  
+  Mention `/verify` and `docs/verification.md` in CLI UX docs.  
+  Acceptance: CLI UX lists verification resources.
+- [x] G28: Add install/test skip flags  
+  Add `-SkipDeps` to install and `-SkipInstall` to test runner for slow environments.  
+  Acceptance: scripts support flags without breaking defaults.
+- [x] G29: Improve /verify guidance  
+  Include `next_steps` suggestions in `/verify` output.  
+  Acceptance: `/verify` reports actionable next steps.
+- [x] G30: Update verification doc with timeouts  
+  Document slow install/test guidance and skip flags.  
+  Acceptance: `docs/verification.md` mentions timeouts and flags.
+- [x] G18: Remote command execution over transport  
+  Implement command relay to remote host once transport is active.  
+  Acceptance: commands route to selected host with same policy checks.  
+  Deps: G11, G12.
+- [x] G21: Key management helpers  
+  Add `/trust keygen` and file encrypt/decrypt helpers.  
+  Acceptance: keygen prints a new key; encrypt/decrypt work with env key.  
+  Deps: G14.
+- [x] G22: Key rotation helper  
+  Add `/rotate <path> <old_env> <new_env>` to re-encrypt bundles.  
+  Acceptance: rotated bundles are written to a new file.  
+  Deps: G20.
+- [x] G19: Remote transport credentials storage/validation  
+  Validate and persist remote transport config for paired hosts.  
+  Acceptance: invalid configs are blocked; status reports missing fields.  
+  Deps: G11.
+- [x] G20: Trust policy key management + rotation  
+  Provide guidance and helper for rotating encryption keys safely.  
+  Acceptance: docs + CLI helper update key and re-encrypt exports.  
+  Deps: G14.
 
 
 P16 ? Operator guidance
@@ -538,15 +598,136 @@ P16 ? Operator guidance
   Deps: AGENTS.md.
 
 P17 ? File governance parity
-- [ ] FG1: Workspace write hard-block option  
+- [x] FG1: Workspace write hard-block option  
   Add a policy toggle to refuse all writes outside repo root even with approval.  
   Acceptance: when enabled, out-of-repo writes are blocked with a clear error and log entry.  
   Deps: CX57.
-- [ ] FG2: External editor provenance hook  
+- [x] FG2: External editor provenance hook  
   Capture pre/post hash for edited files when external editor flow is used.  
   Acceptance: ledger records file path + hash delta for editor-applied changes.  
   Deps: CX12.
-- [ ] FG3: Centralized file-write policy gate for IPC ingest  
+- [x] FG3: Centralized file-write policy gate for IPC ingest  
   Enforce a single write policy for Librarian ingest paths and any IPC-triggered writes.  
   Acceptance: ingest rejected if path violates policy; logged with request_id.  
   Deps: CL2, CL10.
+
+P18 ? Codex behavior parity (conversation + model feel)
+- [x] BX1: Task chain memory + follow-up resolver  
+  Persist an active goal and last actions; resolve short follow-ups ("do that", "continue") to the active chain.  
+  Acceptance: follow-ups map to the latest task/plan; banner shows active goal + next action.
+- [x] BX2: Behavior summaries per turn  
+  Emit a 1-2 line "what I did / what's next" summary after tool runs (toggleable).  
+  Acceptance: summary appears after command plans; can be disabled in config.
+- [x] BX3: Decision visibility + rationale snippets  
+  Persist and display brief rationale alongside proposed commands and approvals.  
+  Acceptance: ledger and UI show a short rationale block for plan proposals.
+- [x] BX4: Context continuity pack  
+  Add a compact active context block (goal, tasks, last plan, last result) used to steer behavior.  
+  Acceptance: `/context` and startup banner include this block; it updates per turn.
+- [x] BX5: Clarification gating rules  
+  Reduce over-questioning: only ask when blocked; otherwise proceed and state assumptions.  
+  Acceptance: behavior aligns with Codex-style minimal questions; assumptions are explicit.
+- [x] BX6: Model support parity (local)  
+  Add local model selection/health in `/status`, optional streaming, and fallback model policy.  
+  Acceptance: operator can switch local model; streaming toggle works; fallback is logged.
+- [x] BX7: Output cadence guardrails  
+  Normalize response cadence (progress note -> actions -> results) to match Codex CLI feel.  
+  Acceptance: outputs follow a consistent flow; tests validate output formatting.
+- [x] BX8: Goal thread persistence  
+  Maintain an active goal until explicitly cleared; follow-ups bind to it.  
+  Acceptance: `/goal` shows/sets/clears; short follow-ups resolve to active goal.
+
+P19 ? UX behavior inventory
+- [x] UX1: Operator-visible behavior inventory  
+  Produce a canonical list of UX behaviors/abilities and keep it updated.  
+  Acceptance: `docs/cli_ux.md` or new doc enumerates behaviors and shortcuts.
+- [x] UX2: Live update + process stacking expectations  
+  Document how Martin stacks processes (plans, retries, background checks) and updates live.  
+  Acceptance: doc covers plan execution, retries, and streaming behavior.
+- [x] UX3: Tooling capability catalog  
+  Document internal abilities, command flows, and audit/ledger coverage.  
+  Acceptance: doc lists abilities and how to invoke them.
+- [x] UX4: Test/verify workflow expectations  
+  Document `/verify`, test runner, and how to update docs/logs during changes.  
+  Acceptance: doc defines the workflow and acceptance steps.
+- [x] UX5: Surface behavior inventory from /help  
+  Add a pointer to `docs/ux_behaviors.md` in `/help` output.  
+  Acceptance: `/help` prints the doc reference.
+
+P20 ? UAT harness stability
+- [x] UAT1: Normalize prompts for socket harness auto-wait  
+  Strip ANSI or emit explicit prompt tokens when using test socket mode.  
+  Acceptance: auto-wait detects prompts reliably in socket mode with ANSI prompts.
+- [x] UAT2: Unit test prompt normalization  
+  Add a lightweight test for ANSI prompt matching in the harness.  
+  Acceptance: test covers ANSI prompt string and passes.
+- [x] UAT3: De-duplicate outputs in socket harness mode  
+  Avoid double-printing stdout when socket streaming is active.  
+  Acceptance: output appears once in harness echo and buffer.
+- [x] UAT4: Socket handshake/timeout handling  
+  Fail fast or fall back if the harness cannot connect to the test socket.  
+  Acceptance: harness reports a clear error instead of hanging.
+- [x] UAT5: Emit prompt-ready events over socket  
+  Add explicit "prompt" events for the harness to detect readiness without ANSI parsing.  
+  Acceptance: harness can auto-wait on prompt events only.
+- [x] UAT6: Fix socket input consumption in test bridge  
+  Ensure `input` messages sent over the test socket are queued and consumed by CLI prompts.  
+  Acceptance: harness receives input_ack and CLI progresses past prompts.
+- [ ] UAT8: Test socket mode parity check  
+  Add a lightweight test or harness check that context auto-surface runs in test socket mode.  
+  Acceptance: test socket runs show context summary without special-casing test mode.
+- [x] UAT9: Event-based waits for socket harness  
+  Add `wait_for_event` support so scenarios can wait for prompt/input events instead of text.  
+  Acceptance: harness can wait for `prompt` or `input_used` events in socket mode.
+
+P20a ? UAT harness stability (task breakdown)
+- [x] UAT6a: Ensure socket inputs are accepted  
+  Verify token matching and queue insert; emit input_ack on accept.  
+  Acceptance: input_ack arrives for each sent input.
+- [x] UAT6b: Confirm CLI consumes socket inputs  
+  After input_ack, CLI prompt advances without manual stdin.  
+  Acceptance: CLI prints next prompt or response after socket input.
+- [x] UAT6c: Harness waits on input_ack  
+  Use input_used as readiness signal before sending next input.  
+  Acceptance: no dropped inputs in socket mode.
+- [x] UAT5a: Prompt-ready on connect  
+  Send last prompt to new socket client immediately.  
+  Acceptance: harness sees prompt without waiting for new prompt.
+- [x] UAT5b: Prompt-ready on each prompt  
+  Emit prompt event every time `input()` is called.  
+  Acceptance: harness auto-wait triggers reliably.
+- [x] UAT1a: ANSI normalization in harness buffer  
+  Strip ANSI before regex prompt detection.  
+  Acceptance: auto-wait detects colored prompts.
+- [x] UAT3a: Output de-dup in harness  
+  Avoid double-reading stdout when socket output stream is active.  
+  Acceptance: output lines appear once.
+- [x] UAT4a: Socket connect/ping failure handling  
+  Exit with clear error when socket not reachable.  
+  Acceptance: no hang; error printed.
+
+P20b ? UAT mailbox mode
+- [x] UAT7a: Mailbox NDJSON logging  
+  Log socket/stdout events to `logs/uat_mailbox.ndjson` in mailbox mode.  
+  Acceptance: NDJSON entries appear with type/text/timestamp.
+- [x] UAT7b: Mailbox keep-alive window  
+  Keep session alive for `mailbox_duration` before exit.  
+  Acceptance: events continue to stream during window.
+
+P21 ? UX polish fixes
+- [x] UX6: Fix duplicate footer render in chat flow  
+  Remove redundant footer rendering after responses.  
+  Acceptance: status footer renders once per turn.
+
+P22 ? Security hardening (test tooling)
+- [x] SEC1: Gate test socket inputs  
+  Restrict test socket inputs to loopback-only or require a token.  
+  Acceptance: non-local clients are rejected; local tests still work.
+
+P23 ? Documentation coverage
+- [x] DOC4: Link expected behavior doc from UX/help  
+  Add `docs/expected_behavior.md` to CLI UX docs and `/help`.  
+  Acceptance: `/help` and `docs/cli_ux.md` mention the expected behavior doc.
+- [x] DOC5: UX test audit plan  
+  Provide a test plan mapping UX tickets to manual checks.  
+  Acceptance: `docs/ux_test_audit.md` exists and covers UX tickets.
