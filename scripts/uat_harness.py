@@ -204,6 +204,7 @@ def main() -> int:
     output_lock = threading.Lock()
     event_buffer: List[Dict[str, Any]] = []
     event_lock = threading.Lock()
+    socket_output_seen = threading.Event()
     socket_conn = None
     socket_reader = None
     prompt_event = threading.Event()
@@ -226,7 +227,8 @@ def main() -> int:
         assert proc.stdout is not None
         for line in proc.stdout:
             cleaned = _strip_ansi(line)
-            if capture_stdout:
+            allow_stdout = capture_stdout or (use_socket and not socket_output_seen.is_set())
+            if allow_stdout:
                 with output_lock:
                     if cleaned and cleaned == last_line["value"]:
                         continue
@@ -282,6 +284,8 @@ def main() -> int:
                     with event_lock:
                         event_buffer.append({"ts": time.time(), "type": msg_type, "text": text})
                     _append_log(event_log, {"ts": time.time(), "type": msg_type, "text": text})
+                if msg_type == "output":
+                    socket_output_seen.set()
                 if msg_type == "prompt":
                     with output_lock:
                         output_buffer.append("PROMPT_READY")
