@@ -19,6 +19,7 @@ Bug Log
 - 2025-12-30: Socket input wait used a shared threading.Event and occasionally missed `input_used`; switched to event-buffer waits for `input_used`.
 - 2025-12-30: Harness warned about loop readiness even when scenarios explicitly waited on `loop_ready`; suppress redundant warning when scenarios include the wait.
 - 2025-12-30: Socket UAT scenario sent follow-up input during approval prompt; reordered steps to answer approval before next question.
+- 2025-12-30: Socket runs sometimes miss the `input_used` wait despite matching input events; added fallback to accept matching input_ack/input_used in the event buffer.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
 - 2025-12-30: Librarian ingest hit `SimpleIndex.save()` missing `path` (from ledger: librarian_error). Fixed by saving via config-aware helper.

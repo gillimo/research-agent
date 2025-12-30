@@ -713,6 +713,9 @@ P20 ? UAT harness stability
 - [x] UAT21: Scenario approval ordering  
   Ensure socket scenarios respond to approval prompts before sending follow-up questions.  
   Acceptance: "Approve running" is answered before the next user input is sent.
+- [x] UAT22: Input wait fallback  
+  Accept matching `input_ack`/`input_used` events when the wait misses the exact signal.  
+  Acceptance: socket runs avoid false "input not consumed" warnings when events are present.
 
 P20a ? UAT harness stability (task breakdown)
 - [x] UAT6a: Ensure socket inputs are accepted  

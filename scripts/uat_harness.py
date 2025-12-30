@@ -385,8 +385,15 @@ def main() -> int:
                     event_buffer, ["input_used"], used_timeout, event_cursor, event_lock
                 )
                 if not found:
-                    print("[warn] Input not consumed before timeout.", file=sys.stderr)
-                    break
+                    matched = False
+                    with event_lock:
+                        for payload in event_buffer:
+                            if payload.get("type") in ("input_used", "input_ack") and payload.get("text") == text:
+                                matched = True
+                                break
+                    if not matched:
+                        print("[warn] Input not consumed before timeout.", file=sys.stderr)
+                        break
         if isinstance(wait_for, str):
             if mailbox_mode:
                 continue
