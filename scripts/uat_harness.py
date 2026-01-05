@@ -349,6 +349,8 @@ def main() -> int:
                         output_buffer.append("PROMPT_READY")
                     prompt_event.set()
                     saw_prompt["value"] = True
+                    if mailbox_mode:
+                        _flush_pending()
                 if msg_type == "input_used":
                     input_used_event.set()
                 if msg_type == "loop_ready":
@@ -477,9 +479,12 @@ def main() -> int:
         latest_prompt = _latest_prompt_text()
         remaining: List[Dict[str, Any]] = []
         for item in pending_inputs:
+            bypass_prompt_gate = False
             if mailbox_mode and item.get("input_when_prompt"):
                 tokens = [item.get("input_when_prompt")] if isinstance(item.get("input_when_prompt"), str) else list(item.get("input_when_prompt") or [])
-                if not any(token and token in latest_prompt for token in tokens):
+                if any(token and token in latest_prompt for token in tokens):
+                    bypass_prompt_gate = True
+                else:
                     remaining.append(item)
                     continue
             if _conditions_met(
@@ -487,10 +492,10 @@ def main() -> int:
                 item.get("input_when_event"),
                 item.get("baseline_text"),
                 item.get("baseline_event"),
-            ) and _conditions_met_prompt(
+            ) and (bypass_prompt_gate or _conditions_met_prompt(
                 item.get("input_when_prompt"),
                 item.get("baseline_prompt"),
-            ):
+            )):
                 _send(item["input"])
                 _append_log(
                     event_log,
@@ -557,8 +562,13 @@ def main() -> int:
         input_when_prompt = step.get("input_when_prompt")
         if isinstance(text, str):
             should_send = True
-            if mailbox_mode and (input_when_text or input_when_event or input_when_prompt):
+            if mailbox_mode and (input_when_text or input_when_event):
                 should_send = False
+            if mailbox_mode and input_when_prompt and not (input_when_text or input_when_event):
+                prompt_tokens = [input_when_prompt] if isinstance(input_when_prompt, str) else list(input_when_prompt or [])
+                latest_prompt = _latest_prompt_text()
+                if not any(token and token in latest_prompt for token in prompt_tokens):
+                    should_send = False
             if input_when_prompt:
                 tokens = [input_when_prompt] if isinstance(input_when_prompt, str) else list(input_when_prompt or [])
                 if not mailbox_mode:

@@ -1,4 +1,5 @@
 import argparse
+import builtins
 import datetime
 import logging
 import os
@@ -6,6 +7,7 @@ import re
 import sys
 import time
 import json # Added for main loop
+import traceback
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -15,19 +17,23 @@ if __package__ is None and __name__ == "__main__":
 from researcher import sanitize
 from researcher.config_loader import load_config, ensure_dirs
 from researcher.index import SimpleIndex, FaissIndex
+from researcher.index_utils import save_index_from_config
 from researcher.ingester import ingest_files
 from researcher.log_utils import setup_logger
 from researcher.provenance import build_response
 from researcher.answer import compose_answer
 # Removed: from researcher.martin_behaviors import sanitize_and_extract, run_plan
 from researcher.supervisor import nudge_message
-from researcher.local_llm import run_ollama_chat
+from researcher.local_llm import run_ollama_chat, run_ollama_chat_stream, check_ollama_health
 from researcher import chat_ui
 from researcher.tui_shell import run_tui
+from researcher.remote_transport import start_tunnel, stop_tunnel, status_tunnel, validate_transport
+from researcher.system_context import get_system_context
 
 # New imports for Librarian client
 from researcher.librarian_client import LibrarianClient
 from researcher.socket_server import SocketServer
+from researcher.socket_test_bridge import TestSocketBridge
 
 # New imports for Martin's main loop
 from researcher.state_manager import load_state, save_state, log_event, SessionCtx, ROOT_DIR, LEDGER_FILE
@@ -70,12 +76,235 @@ def _store_long_output(output: str, label: str) -> str:
         return ""
 
 
+def _write_crash_log(exc: BaseException) -> str:
+    if _privacy_enabled_state():
+        return ""
+    try:
+        _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+        path = _OUTPUT_DIR / f"{ts}_crash.log"
+        payload = [
+            "martin crash report",
+            f"time_utc: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
+            f"cwd: {Path.cwd()}",
+            f"argv: {sys.argv}",
+            f"python: {sys.version}",
+            f"exception: {type(exc).__name__}: {exc}",
+            "",
+            "traceback:",
+            traceback.format_exc(),
+            "",
+        ]
+        path.write_text("\n".join(payload), encoding="utf-8")
+        return str(path)
+    except Exception:
+        return ""
+
+
 def _privacy_enabled_state() -> bool:
     try:
         st = load_state()
         return st.get("session_privacy") == "no-log"
     except Exception:
         return False
+
+
+def _logging_verbose(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    if _privacy_enabled_state():
+        return False
+    try:
+        cfg = cfg or load_config()
+    except Exception:
+        cfg = cfg or {}
+    logging_cfg = cfg.get("logging", {}) or {}
+    return bool(logging_cfg.get("verbose", False))
+
+
+def _behavior_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
+    try:
+        cfg = cfg or load_config()
+    except Exception:
+        cfg = cfg or {}
+    behavior = cfg.get("behavior", {}) or {}
+    return {
+        "summaries": bool(behavior.get("summaries", False)),
+        "followup_resolver": bool(behavior.get("followup_resolver", False)),
+        "clarification_policy": bool(behavior.get("clarification_policy", False)),
+        "context_block": bool(behavior.get("context_block", False)),
+    }
+
+
+def _ui_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
+    try:
+        cfg = cfg or load_config()
+    except Exception:
+        cfg = cfg or {}
+    ui = cfg.get("ui", {}) or {}
+    return {"footer": bool(ui.get("footer", False))}
+
+
+def _summarize_user_input(text: str, max_len: int = 200) -> Tuple[str, bool]:
+    if not text:
+        return "", False
+    sanitized, changed = sanitize.sanitize_prompt(text)
+    summary = chat_ui.shorten_output(sanitized, max_len=max_len)
+    return summary, changed
+
+
+def _summarize_text(text: str, max_len: int = 200) -> Tuple[str, bool]:
+    if not text:
+        return "", False
+    sanitized, changed = sanitize.sanitize_prompt(text)
+    summary = chat_ui.shorten_output(sanitized, max_len=max_len)
+    return summary, changed
+
+
+def _sanitize_command_list(cmds: List[str]) -> Tuple[List[str], bool]:
+    out: List[str] = []
+    any_changed = False
+    for cmd in cmds:
+        sanitized, changed = sanitize.sanitize_prompt(cmd)
+        any_changed = any_changed or changed
+        out.append(chat_ui.shorten_output(sanitized, max_len=200))
+    return out, any_changed
+
+
+def _is_followup(text: str) -> bool:
+    lowered = (text or "").strip().lower()
+    if not lowered:
+        return False
+    if lowered in {"do that", "do it", "continue", "go ahead", "yes", "y", "ok", "okay", "yep", "sure"}:
+        return True
+    return lowered.startswith(("continue", "go ahead", "do that", "do it"))
+
+
+def _is_short_followup(text: str) -> bool:
+    lowered = (text or "").strip().lower()
+    if not lowered:
+        return False
+    tokens = [t for t in lowered.split() if t]
+    if len(tokens) <= 4:
+        if any(k in lowered for k in ("new goal", "change goal", "reset goal", "stop", "cancel")):
+            return False
+        return True
+    return False
+
+
+def _ingest_allowlist(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    ingest_cfg = cfg.get("ingest", {}) or {}
+    roots = [Path(r).resolve() for r in (ingest_cfg.get("allowlist_roots") or []) if r]
+    exts = [e.lower().lstrip(".") for e in (ingest_cfg.get("allowlist_exts") or []) if e]
+    mode = (ingest_cfg.get("allowlist_mode") or "warn").lower()
+    return {"roots": roots, "exts": exts, "mode": mode}
+
+
+def _scan_proprietary_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    ingest_cfg = cfg.get("ingest", {}) or {}
+    return {
+        "enabled": bool(ingest_cfg.get("scan_proprietary", False)),
+        "mode": (ingest_cfg.get("scan_mode") or "warn").lower(),
+        "max_bytes": int(ingest_cfg.get("scan_max_bytes") or 200000),
+    }
+
+
+def _is_path_allowed(path: Path, allowlist: Dict[str, Any]) -> bool:
+    roots = allowlist.get("roots") or []
+    exts = allowlist.get("exts") or []
+    if roots and not any(path == r or r in path.parents for r in roots):
+        return False
+    if exts:
+        if path.suffix.lower().lstrip(".") not in exts:
+            return False
+    return True
+
+
+def _scan_text_for_sensitive(text: str) -> Tuple[bool, str]:
+    sanitized, changed = sanitize.sanitize_prompt(text or "")
+    if changed:
+        return True, "redaction_detected"
+    return False, ""
+
+
+def _encryption_policy(cfg: Dict[str, Any], current_host: str) -> Dict[str, Any]:
+    trust = cfg.get("trust_policy", {}) or {}
+    encrypt_exports = bool(trust.get("encrypt_exports", False))
+    encrypt_when_remote = bool(trust.get("encrypt_when_remote", True))
+    key_env = trust.get("encryption_key_env", "MARTIN_ENCRYPTION_KEY")
+    if encrypt_when_remote and current_host and current_host != "local":
+        encrypt_exports = True
+    return {"encrypt": encrypt_exports, "key_env": key_env}
+
+
+def _build_active_context(st: Dict[str, Any]) -> Dict[str, Any]:
+    tasks = st.get("tasks", []) if isinstance(st.get("tasks"), list) else []
+    next_action = tasks[0].get("text") if tasks else ""
+    last_plan = st.get("last_plan", {}) if isinstance(st.get("last_plan"), dict) else {}
+    last_cmd = st.get("last_command_summary", {}) if isinstance(st.get("last_command_summary"), dict) else {}
+    return {
+        "goal": st.get("active_goal", ""),
+        "next_action": next_action,
+        "last_plan_status": last_plan.get("status", ""),
+        "last_plan_steps": len(last_plan.get("steps", []) or []),
+        "last_command": last_cmd.get("cmd", ""),
+        "last_command_rc": last_cmd.get("rc"),
+        "last_action_summary": st.get("last_action_summary", ""),
+        "tasks_count": len(tasks),
+    }
+
+
+def _plan_to_tasks(cmds: List[str]) -> List[Dict[str, str]]:
+    tasks: List[Dict[str, str]] = []
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for cmd in cmds:
+        raw = cmd.strip()
+        if raw.lower().startswith("command:"):
+            raw = raw.split(":", 1)[1].strip()
+        label = raw
+        if raw.lower().startswith("martin."):
+            label = f"internal: {raw}"
+        tasks.append({"text": label, "ts": ts})
+    return tasks
+
+
+def _maybe_set_plan_tasks(st: Dict[str, Any], cmds: List[str]) -> bool:
+    tasks = st.get("tasks", []) if isinstance(st.get("tasks"), list) else []
+    source = st.get("tasks_source", "")
+    if tasks and source != "plan":
+        return False
+    st["tasks"] = _plan_to_tasks(cmds)
+    st["tasks_source"] = "plan"
+    st.pop("tasks_prompted", None)
+    return True
+
+
+def _maybe_advance_plan_task(ok: bool) -> None:
+    if not ok:
+        return
+    try:
+        st = load_state()
+        if st.get("tasks_source") != "plan":
+            return
+        tasks = st.get("tasks", []) if isinstance(st.get("tasks"), list) else []
+        if tasks:
+            tasks.pop(0)
+            st["tasks"] = tasks
+            st.pop("tasks_prompted", None)
+            save_state(st)
+    except Exception:
+        pass
+
+
+def _maybe_update_goal(st: Dict[str, Any], user_text: str, force: bool = False) -> None:
+    if not user_text:
+        return
+    lowered = user_text.strip().lower()
+    if "new goal:" in lowered or "goal:" in lowered:
+        force = True
+    if st.get("active_goal") and not force:
+        return
+    summary, _ = _summarize_user_input(user_text, max_len=140)
+    if summary:
+        st["active_goal"] = summary
 
 
 def _null_logger() -> logging.Logger:
@@ -105,10 +334,24 @@ def get_status_payload(cfg, force_simple: bool = False) -> Dict[str, Any]:
     load_ms = (time.perf_counter() - t0) * 1000.0
     vs = cfg.get("vector_store", {}) or {}
     st = load_state()
+    local_llm_cfg = cfg.get("local_llm", {}) or {}
+    local_enabled = bool(local_llm_cfg.get("enabled", cfg.get("local_llm_enabled", False)))
+    local_stream = bool(local_llm_cfg.get("streaming", False))
+    fallbacks = local_llm_cfg.get("fallbacks", []) or []
+    health = check_ollama_health(cfg.get("ollama_host", "http://localhost:11434"), cfg.get("local_model", "phi3"))
+    remote_status = {}
+    try:
+        remote_status = status_tunnel(cfg)
+    except Exception:
+        remote_status = {}
     return {
         "version": __version__,
         "model_main": MODEL_MAIN,
         "local_model": str(cfg.get("local_model")),
+        "local_model_ok": bool(health.get("ok")),
+        "local_llm_enabled": local_enabled,
+        "local_llm_streaming": local_stream,
+        "local_llm_fallbacks": fallbacks,
         "embedding_model": str(cfg.get("embedding_model")),
         "index_type": vs.get("type", "simple"),
         "index_path": str(vs.get("index_path", "")),
@@ -119,7 +362,9 @@ def get_status_payload(cfg, force_simple: bool = False) -> Dict[str, Any]:
             "last_session_start": st.get("last_session", {}).get("started_at"),
             "ledger_entries": st.get("ledger", {}).get("entries"),
             "workspace_path": st.get("workspace", {}).get("path"),
+            "current_host": st.get("current_host", ""),
         },
+        "remote_transport": remote_status,
         "local_only": bool(cfg.get("local_only")),
     }
 
@@ -172,12 +417,19 @@ def cmd_status(cfg, force_simple: bool = False, as_json: bool = False) -> int:
     rows = [
         ("version", payload.get("version")),
         ("local_model", payload.get("local_model")),
+        ("local_model_ok", str(payload.get("local_model_ok"))),
+        ("local_llm_enabled", str(payload.get("local_llm_enabled"))),
+        ("local_llm_streaming", str(payload.get("local_llm_streaming"))),
+        ("local_llm_fallbacks", ", ".join(payload.get("local_llm_fallbacks", []) or [])),
         ("embedding_model", payload.get("embedding_model")),
         ("index_type", payload.get("index_type")),
         ("index_path", payload.get("index_path")),
         ("index_docs", str(payload.get("index_docs"))),
         ("index_load_ms", f"{payload.get('index_load_ms', 0):.2f}"),
     ]
+    remote = payload.get("remote_transport", {}) or {}
+    if remote:
+        rows.append(("remote_transport", remote.get("status")))
     for k, v in rows:
         table.add_row(k, v)
     console.print(table)
@@ -319,7 +571,26 @@ def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional
     _get_cli_logger(cfg).info("ingest paths=%d force_simple=%s max_files=%d", len(paths), force_simple, max_files)
     expanded = _collect_ingest_files(paths, exts=exts, max_files=max_files)
     existing_paths = [p for p in expanded if Path(p).exists()]
-    if not existing_paths:
+    allowlist = _ingest_allowlist(cfg)
+    scan_cfg = _scan_proprietary_cfg(cfg)
+    blocked_paths = []
+    allowed_paths = []
+    for p in existing_paths:
+        path = Path(p)
+        if not _is_path_allowed(path, allowlist):
+            blocked_paths.append(p)
+            continue
+        allowed_paths.append(p)
+    if blocked_paths:
+        log_event(st, "ingest_allowlist_blocked", blocked_count=len(blocked_paths), blocked=blocked_paths[:10])
+        if allowlist.get("mode") == "block":
+            msg = "Ingest blocked by allowlist."
+            if as_json:
+                print(json.dumps({"ok": False, "error": "allowlist_blocked", "blocked": blocked_paths[:10]}, ensure_ascii=False))
+            else:
+                print(msg, file=sys.stderr)
+            return 1
+    if not allowed_paths:
         msg = "No valid files found to ingest."
         log_event(st, "ingest_command_failed", files_count=0, error="no_valid_files")
         if as_json:
@@ -328,11 +599,32 @@ def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional
             print(msg, file=sys.stderr)
         return 1
 
+    trust_policy = cfg.get("trust_policy", {}) or {}
+    trust_label = trust_policy.get("default_source", "internal")
     idx = _load_index(cfg, force_simple=force_simple)
-    files = [Path(p) for p in existing_paths]
-    local_result = ingest_files(idx, files)
-    if hasattr(idx, "save"):
-        idx.save()
+    files = [Path(p) for p in allowed_paths]
+    scan_hits = []
+    if scan_cfg.get("enabled"):
+        for fp in files:
+            try:
+                data = fp.read_bytes()[: scan_cfg.get("max_bytes", 200000)]
+                text = data.decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+            flagged, reason = _scan_text_for_sensitive(text)
+            if flagged:
+                scan_hits.append({"path": str(fp), "reason": reason})
+        if scan_hits:
+            log_event(st, "ingest_scan_flagged", hits=len(scan_hits), samples=scan_hits[:5])
+            if scan_cfg.get("mode") == "block":
+                msg = "Ingest blocked by proprietary scan."
+                if as_json:
+                    print(json.dumps({"ok": False, "error": "scan_blocked", "hits": scan_hits[:5]}, ensure_ascii=False))
+                else:
+                    print(msg, file=sys.stderr)
+                return 1
+    local_result = ingest_files(idx, files, trust_label=trust_label, source_type="local")
+    save_index_from_config(cfg, idx)
     log_event(st, "ingest_command", files_count=len(files), errors_count=len(local_result.get("errors", [])), idx_type="local")
     try:
         st = load_state()
@@ -422,6 +714,17 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
         return 0
 
     hits = idx.search(sanitized, k=k)
+    trust_policy = cfg.get("trust_policy", {}) or {}
+    allowed_sources = trust_policy.get("allow_sources") or []
+    if allowed_sources:
+        filtered = []
+        for score, meta in hits:
+            trust = (meta.get("trust") or "internal").lower()
+            if trust in [s.lower() for s in allowed_sources]:
+                filtered.append((score, meta))
+        if len(filtered) != len(hits):
+            log_event(st, "rag_trust_filter", before=len(hits), after=len(filtered))
+        hits = filtered
     top_score = max([h[0] for h in hits], default=0.0)
     log_event(st, "ask_command", k=k, hits_count=len(hits), top_score=top_score, sanitized=changed) # Use state_manager's log_event
     gap_threshold = cfg.get("auto_update", {}).get("ingest_threshold", 0.1)
@@ -434,11 +737,33 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
     cloud_answer_ingested = False
     # Optional local LLM generation
     llm_answer = None
-    if cfg.get("local_llm_enabled") or use_llm:
+    local_llm_cfg = cfg.get("local_llm", {}) or {}
+    local_enabled = bool(local_llm_cfg.get("enabled", cfg.get("local_llm_enabled", False)))
+    local_stream = bool(local_llm_cfg.get("streaming", False))
+    fallbacks = local_llm_cfg.get("fallbacks", []) or []
+    streamed = False
+    if local_enabled or use_llm:
         ctx = "\n".join([meta.get("chunk", "") for _, meta in hits][:3])
         llm_prompt = f"Context:\n{ctx}\n\nUser question:\n{prompt}\n\nAnswer concisely. If no context, say so."
-        llm_answer = run_ollama_chat(cfg.get("local_model", "phi3"), llm_prompt, cfg.get("ollama_host", "http://localhost:11434"))
-        log_event(st, "ask_local_llm", llm_used=bool(llm_answer)) # Use state_manager's log_event
+        model = cfg.get("local_model", "phi3")
+        if local_stream:
+            def _stream_token(tok: str) -> None:
+                print(tok, end="", flush=True)
+            print("Answer (streaming):")
+            llm_answer = run_ollama_chat_stream(model, llm_prompt, cfg.get("ollama_host", "http://localhost:11434"), on_token=_stream_token)
+            print("")
+            streamed = True
+        else:
+            llm_answer = run_ollama_chat(model, llm_prompt, cfg.get("ollama_host", "http://localhost:11434"))
+        if not llm_answer and fallbacks:
+            for fb in fallbacks:
+                if not fb:
+                    continue
+                llm_answer = run_ollama_chat(fb, llm_prompt, cfg.get("ollama_host", "http://localhost:11434"))
+                if llm_answer:
+                    log_event(st, "ask_local_llm_fallback", model=fb)
+                    break
+        log_event(st, "ask_local_llm", llm_used=bool(llm_answer), streamed=streamed)
         if llm_answer:
             answer = llm_answer
 
@@ -545,7 +870,8 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
         log_event(st, "ask_cache_put", key=cache_key)
         return 0
     print(f"confidence: {top_score:.3f} | hits: {len(hits)} | cloud: {len(cloud_hits)}")
-    print("\nAnswer:\n" + answer + "\n")
+    if not streamed:
+        print("\nAnswer:\n" + answer + "\n")
     table = Table(title="Local Results")
     table.add_column("score", style="cyan")
     table.add_column("source", style="magenta")
@@ -590,6 +916,18 @@ def cmd_chat(cfg, args) -> int:
 
     def _handle_librarian_notification(message: Dict[str, Any]) -> None:
         try:
+            trust_policy = cfg.get("trust_policy", {}) or {}
+            if not trust_policy.get("allow_librarian_notes", True):
+                log_event(load_state(), "librarian_note_blocked", reason="trust_policy")
+                return
+            try:
+                details = message.get("details", {}) if isinstance(message, dict) else {}
+                err = (details.get("error") or "").lower()
+                if "local-only" in err or "local_only" in err:
+                    print("\033[93mmartin: Librarian note blocked by local-only mode.\033[0m")
+                    log_event(load_state(), "librarian_note_blocked", reason="local_only")
+            except Exception:
+                pass
             st = load_state()
             inbox = st.get("librarian_inbox", [])
             if not isinstance(inbox, list):
@@ -672,6 +1010,7 @@ def cmd_chat(cfg, args) -> int:
             print("martin: Onboarding already completed. Use /onboarding to re-run.")
         print("\033[96mmartin: Onboarding checklist\033[0m")
         print("- Verify local-only mode (`/status` shows local_only true if desired).")
+        print("- Run `/verify` to check venv/scripts/remote config.")
         print("- Set your logbook handle (first clock-in prompt).")
         print("- Run tests: `/tests` then `/tests run <n>`.")
         print("- Review tickets in docs/tickets.md.")
@@ -723,7 +1062,7 @@ def cmd_chat(cfg, args) -> int:
         if not handle:
             default_handle = current_username or "user"
             try:
-                entered = input(f"martin: Handle for logbook? (enter for {default_handle}) ").strip()
+                entered = read_user_input(f"martin: Handle for logbook? (enter for {default_handle}) ").strip()
             except (EOFError, KeyboardInterrupt):
                 entered = ""
             handle = entered or default_handle
@@ -734,17 +1073,9 @@ def cmd_chat(cfg, args) -> int:
 
     def _prompt_clock(action: str) -> None:
         handle = _ensure_handle()
-        try:
-            note = input(f"martin: {action} note (or .skip <reason>): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            note = ".skip interrupted"
-        if note.startswith(".skip"):
-            reason = note.replace(".skip", "", 1).strip() or "no reason"
-            append_logbook_entry(handle, action, "", skipped_reason=reason)
-            append_worklog("thinking", f"{action} skipped: {reason}")
-            return
-        append_logbook_entry(handle, action, note or "ok")
-        append_worklog("doing", f"{action} recorded")
+        note = f"auto: {action.lower()}"
+        append_logbook_entry(handle, action, note)
+        append_worklog("doing", f"{action} recorded (auto)")
 
     def _run_cmd_with_worklog(cmd: str) -> Tuple[bool, str, str, int]:
         append_worklog("doing", f"run: {cmd}")
@@ -753,6 +1084,35 @@ def cmd_chat(cfg, args) -> int:
             append_worklog("cancel", f"rc=130 {cmd}")
         else:
             append_worklog("done", f"rc={rc} {cmd}")
+        return ok, stdout, stderr, rc
+
+    def _run_remote_cmd(cmd: str) -> Tuple[bool, str, str, int]:
+        append_worklog("doing", f"remote: {cmd}")
+        rt = cfg.get("remote_transport", {}) or {}
+        ssh_host = rt.get("ssh_host", "")
+        ssh_user = rt.get("ssh_user", "")
+        identity_file = rt.get("identity_file", "")
+        if not ssh_host:
+            return False, "", "remote transport missing ssh_host", 2
+        user_host = f"{ssh_user}@{ssh_host}" if ssh_user else ssh_host
+        args = ["ssh", user_host, cmd]
+        if identity_file:
+            args = ["ssh", "-i", identity_file, user_host, cmd]
+        try:
+            res = subprocess.run(args, capture_output=True, text=True, check=False)
+            stdout = res.stdout or ""
+            stderr = res.stderr or ""
+            rc = res.returncode
+            ok = rc == 0
+        except Exception as e:
+            stdout = ""
+            stderr = str(e)
+            rc = 2
+            ok = False
+        if rc == 130:
+            append_worklog("cancel", f"rc=130 remote {cmd}")
+        else:
+            append_worklog("done", f"rc={rc} remote {cmd}")
         return ok, stdout, stderr, rc
 
     def _format_review_response(text: str) -> str:
@@ -803,6 +1163,15 @@ def cmd_chat(cfg, args) -> int:
         return None
 
     def _confirm_outside_workspace(target: str, cmd: str) -> bool:
+        exec_cfg = cfg.get("execution", {}) or {}
+        hard_block_outside = bool(exec_cfg.get("hard_block_outside"))
+        if hard_block_outside:
+            print("\033[93mmartin: Outside-workspace writes are hard-blocked by policy.\033[0m")
+            try:
+                log_event(load_state(), "workspace_boundary", cmd=cmd, target=target, allowed=False, hard_block=True)
+            except Exception:
+                pass
+            return False
         if approval_policy == "never":
             return False
         try:
@@ -822,6 +1191,19 @@ def cmd_chat(cfg, args) -> int:
         sandbox_mode = (exec_cfg.get("sandbox_mode") or "workspace-write").lower()
         command_allowlist = exec_cfg.get("command_allowlist") or []
         command_denylist = exec_cfg.get("command_denylist") or []
+        remote_policy = (exec_cfg.get("remote_policy") or "block").lower()
+        try:
+            st = load_state()
+            current_host = st.get("current_host", "") if isinstance(st, dict) else ""
+        except Exception:
+            current_host = ""
+        if current_host and current_host != "local" and remote_policy == "block":
+            try:
+                log_event(load_state(), "remote_policy_block", host=current_host, cmd=cmd)
+            except Exception:
+                pass
+            print("\033[93mmartin: Remote relay policy blocks execution on non-local host.\033[0m")
+            return False, "", "remote_policy_block", 2, "", 0.0
         outside = _outside_workspace_path(cmd)
         if outside:
             if not _confirm_outside_workspace(outside, cmd):
@@ -850,7 +1232,14 @@ def cmd_chat(cfg, args) -> int:
                 print("\033[92mmartin: Aborting per approval policy.\033[0m")
                 return False, "", "aborted", 1, "", 0.0
         t0 = time.perf_counter()
-        ok, stdout, stderr, rc = _run_cmd_with_worklog(cmd)
+        if current_host and current_host != "local" and remote_policy == "relay":
+            ok, stdout, stderr, rc = _run_remote_cmd(cmd)
+            try:
+                log_event(load_state(), "remote_command", host=current_host, cmd=cmd, rc=rc)
+            except Exception:
+                pass
+        else:
+            ok, stdout, stderr, rc = _run_cmd_with_worklog(cmd)
         duration = time.perf_counter() - t0
         if rc == 130:
             print("\033[93mmartin: Command cancelled.\033[0m")
@@ -933,6 +1322,26 @@ def cmd_chat(cfg, args) -> int:
         handler=_handle_librarian_notification
     )
     server.start()
+    test_bridge = None
+    test_cfg = cfg.get("test_socket", {}) or {}
+    test_enabled = bool(test_cfg.get("enabled")) or os.environ.get("MARTIN_TEST_SOCKET") == "1"
+    original_input = None
+    if test_enabled:
+        token_env = test_cfg.get("token_env", "MARTIN_TEST_SOCKET_TOKEN")
+        token_value = os.environ.get(token_env, "") if token_env else ""
+        test_bridge = TestSocketBridge(
+            host=test_cfg.get("host", "127.0.0.1"),
+            port=int(test_cfg.get("port", 7002)),
+            fallback_to_stdin=bool(test_cfg.get("fallback_to_stdin", False)),
+            timeout_s=float(test_cfg.get("timeout_s") or 0.0),
+            token=token_value,
+            allow_non_loopback=bool(test_cfg.get("allow_non_loopback", False)),
+        )
+        test_bridge.start()
+        test_bridge.install_streams()
+        original_input = builtins.input
+        builtins.input = test_bridge.read_input
+    read_user_input = test_bridge.read_input if test_bridge else input
     try:
         st = load_state()
         sess = SessionCtx(st)
@@ -954,11 +1363,22 @@ def cmd_chat(cfg, args) -> int:
         except Exception:
             pass
         logger = _get_cli_logger(cfg)
+        verbose_logging = _logging_verbose(cfg)
+        behavior_flags = _behavior_cfg(cfg)
+        ui_flags = _ui_cfg(cfg)
         logger.info("chat_start")
+        if test_bridge:
+            try:
+                test_bridge.send_event({"type": "phase", "text": "chat_start"})
+            except Exception:
+                pass
         last_user_request = ""
         agent_mode = False
         cloud_enabled = bool(cfg.get("cloud", {}).get("enabled"))
         if cfg.get("local_only"):
+            cloud_enabled = False
+        trust_policy = cfg.get("trust_policy", {}) or {}
+        if not trust_policy.get("allow_cloud", False):
             cloud_enabled = False
         exec_cfg = cfg.get("execution", {}) or {}
         approval_policy = (exec_cfg.get("approval_policy") or "on-request").lower()
@@ -1032,12 +1452,44 @@ def cmd_chat(cfg, args) -> int:
             except Exception:
                 last_cmd_summary = {}
             warn = "local-only" if cfg.get("local_only") else ("cloud-off" if not cloud_enabled else "")
+            active_context = {}
+            try:
+                if behavior_flags.get("context_block"):
+                    st = load_state()
+                    active_context = _build_active_context(st)
+            except Exception:
+                active_context = {}
+            try:
+                st = load_state()
+                current_host = st.get("current_host", "") if isinstance(st, dict) else ""
+            except Exception:
+                current_host = ""
+            def _render_footer() -> None:
+                try:
+                    st_local = load_state()
+                    last_cmd = st_local.get("last_command_summary", {}) or {}
+                    active_ctx = _build_active_context(st_local) if behavior_flags.get("context_block") else {}
+                    warn_local = "local-only" if cfg.get("local_only") else ("cloud-off" if not cloud_enabled else "")
+                    host_local = st_local.get("current_host", "") if isinstance(st_local, dict) else ""
+                    chat_ui.render_status_banner(
+                        context_cache,
+                        last_cmd,
+                        mode=("agent" if agent_mode else "manual"),
+                        model_info=MODEL_MAIN,
+                        warnings=warn_local,
+                        active_context=active_ctx,
+                        current_host=host_local,
+                    )
+                except Exception:
+                    pass
             chat_ui.render_status_banner(
                 context_cache,
                 last_cmd_summary,
                 mode=("agent" if agent_mode else "manual"),
                 model_info=MODEL_MAIN,
                 warnings=warn,
+                active_context=active_context,
+                current_host=current_host,
             )
         except Exception:
             pass
@@ -1065,6 +1517,11 @@ def cmd_chat(cfg, args) -> int:
                 print("\033[93mmartin: local-only mode is ON; cloud credentials are present but will be ignored.\033[0m")
         except Exception:
             pass
+        if test_bridge:
+            try:
+                test_bridge.send_event({"type": "loop_ready"})
+            except Exception:
+                pass
         while True:
             try:
                 st = load_state()
@@ -1080,17 +1537,49 @@ def cmd_chat(cfg, args) -> int:
             except Exception:
                 pass
             try:
-                user_input = input("\033[94mYou:\033[0m ")
+                if test_bridge:
+                    try:
+                        test_bridge.send_event({"type": "input_wait"})
+                    except Exception:
+                        pass
+                user_input = read_user_input("\033[94mYou:\033[0m ")
             except (EOFError, KeyboardInterrupt):
                 print("\n\033[92mmartin: Farewell.\033[0m")
                 logger.info("chat_end reason=interrupt")
                 break
+            original_user_input = user_input
 
             if user_input.lower() in ('quit', 'exit'):
                 print("\033[92mmartin: Goodbye!\033[0m")
                 logger.info("chat_end reason=quit")
                 break
             logger.info("chat_input len=%d", len(user_input))
+            try:
+                summary, redacted = _summarize_user_input(original_user_input)
+                if summary:
+                    logger.info("chat_input summary=%s redacted=%s", summary, redacted)
+                log_event(load_state(), "chat_input", length=len(user_input), summary=summary, redacted=redacted)
+            except Exception:
+                pass
+            try:
+                if not _privacy_enabled_state() and behavior_flags.get("followup_resolver") and (_is_followup(original_user_input) or (_is_short_followup(original_user_input) and load_state().get("active_goal"))):
+                    st = load_state()
+                    goal = st.get("active_goal", "") if isinstance(st, dict) else ""
+                    last_action = st.get("last_action_summary", "") if isinstance(st, dict) else ""
+                    if goal:
+                        user_input = f"Continue the active goal: {goal}. Last action: {last_action}"
+                        log_event(load_state(), "followup_resolved", goal=goal, last_action=last_action)
+            except Exception:
+                pass
+            try:
+                if not _privacy_enabled_state() and not _is_followup(original_user_input):
+                    st = load_state()
+                    _maybe_update_goal(st, original_user_input, force=False)
+                    if behavior_flags.get("context_block"):
+                        st["active_context"] = _build_active_context(st)
+                    save_state(st)
+            except Exception:
+                pass
 
             def _is_disagreement(text: str) -> bool:
                 phrases = cfg.get("cloud", {}).get("disagreement_phrases", []) or []
@@ -1116,7 +1605,9 @@ def cmd_chat(cfg, args) -> int:
                     should_exit = True
                     return True
                 if name == "help":
-                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /privacy on|off|status, /keys, /retry, /onboarding, /context [refresh], /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /compress, /signoff, /exit")
+                    print("Commands: /help, /clear, /status, /memory, /history, /palette, /files, /open <path>:<line>, /worklog, /clock in|out, /privacy on|off|status, /keys, /retry, /onboarding, /verify, /context [refresh], /goal status|set <text>|clear, /plan, /outputs [ledger|export <path>|search <text>], /export session <path>, /import session <path>, /resume, /librarian inbox|request <topic>|sources <topic>|accept <n>|dismiss <n>, /rag status, /tasks add|list|done <n>, /review on|off, /abilities, /resources, /resource <path>, /tests, /rerun [command|test], /agent on|off|status, /cloud on|off, /ask <q>, /ingest <path>, /host list|pair|use, /remote start|stop|status|config, /redaction report [days], /trust keygen, /encrypt <path>, /decrypt <path>, /rotate <path> <old_env> <new_env>, /compress, /signoff, /exit")
+                    print("martin: UX behaviors: docs/ux_behaviors.md")
+                    print("martin: Expected behavior: docs/expected_behavior.md")
                     return True
                 if name == "clear":
                     transcript = []
@@ -1198,6 +1689,39 @@ def cmd_chat(cfg, args) -> int:
                     return True
                 if name == "onboarding":
                     _run_onboarding()
+                    return True
+                if name == "verify":
+                    venv_root = Path(".venv")
+                    py_path = venv_root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+                    pytest_ok = False
+                    if py_path.exists():
+                        try:
+                            res = subprocess.run([str(py_path), "-m", "pytest", "--version"], capture_output=True, text=True, check=False)
+                            pytest_ok = res.returncode == 0
+                        except Exception:
+                            pytest_ok = False
+                    install_script = Path("scripts") / "install_martin.ps1"
+                    service_script = Path("scripts") / "martin_service.ps1"
+                    trust = cfg.get("trust_policy", {}) or {}
+                    key_env = trust.get("encryption_key_env", "MARTIN_ENCRYPTION_KEY")
+                    key_set = bool(os.environ.get(key_env or ""))
+                    next_steps = []
+                    if not py_path.exists():
+                        next_steps.append("run scripts/install_martin.ps1")
+                    if py_path.exists() and not pytest_ok:
+                        next_steps.append("run scripts/run_tests.ps1")
+                    if not key_set and trust.get("encrypt_exports"):
+                        next_steps.append(f"set {key_env} env var for encryption")
+                    report = {
+                        "venv_python": str(py_path) if py_path.exists() else "",
+                        "pytest_available": pytest_ok,
+                        "install_script": str(install_script) if install_script.exists() else "",
+                        "service_script": str(service_script) if service_script.exists() else "",
+                        "remote_transport": validate_transport(cfg),
+                        "encryption_key_set": key_set,
+                        "next_steps": next_steps,
+                    }
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
                     return True
                 if name == "signoff":
                     if transcript:
@@ -1318,6 +1842,11 @@ def cmd_chat(cfg, args) -> int:
                 if name == "plan":
                     st = load_state()
                     payload = st.get("last_plan", {})
+                    if isinstance(payload, dict):
+                        payload = dict(payload)
+                        rationale = st.get("last_plan_rationale", "")
+                        if rationale:
+                            payload["rationale"] = rationale
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
                     return True
                 if name == "outputs":
@@ -1393,6 +1922,21 @@ def cmd_chat(cfg, args) -> int:
                         out_path = args[1] if len(args) > 1 else str(Path("logs") / "tool_ledger_export.json")
                         try:
                             content = build_export_json()
+                            try:
+                                st = load_state()
+                                current_host = st.get("current_host", "") if isinstance(st, dict) else ""
+                            except Exception:
+                                current_host = ""
+                            enc_cfg = _encryption_policy(cfg, current_host)
+                            if enc_cfg.get("encrypt"):
+                                from researcher.crypto_utils import encrypt_text
+                                key_env = enc_cfg.get("key_env")
+                                key = os.environ.get(key_env or "")
+                                if not key:
+                                    print("martin: Encryption key not set; export blocked.")
+                                    return True
+                                content = encrypt_text(content, key)
+                                out_path = out_path + ".enc" if not out_path.endswith(".enc") else out_path
                             if preview_write(Path(out_path), content):
                                 Path(out_path).write_text(content, encoding="utf-8")
                                 print(f"martin: Exported tool ledger to {out_path}")
@@ -1618,6 +2162,217 @@ def cmd_chat(cfg, args) -> int:
                     }
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
                     return True
+                if name == "host":
+                    st = load_state()
+                    devices = st.get("devices", []) if isinstance(st.get("devices"), list) else []
+                    current = st.get("current_host", "")
+                    if not args or args[0].lower() == "list":
+                        if not devices:
+                            print("martin: No paired devices.")
+                            return True
+                        for dev in devices:
+                            marker = "*" if dev.get("name") == current else " "
+                            print(f"{marker} {dev.get('name','')} ({dev.get('paired_at','')})")
+                        return True
+                    action = args[0].lower()
+                    if action == "pair":
+                        name = " ".join(args[1:]).strip()
+                        if not name:
+                            print("martin: Use /host pair <name>.")
+                            return True
+                        if any(d.get("name") == name for d in devices):
+                            print("martin: Device already paired.")
+                            return True
+                        device = {"name": name, "paired_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+                        devices.append(device)
+                        st["devices"] = devices
+                        st["current_host"] = name
+                        save_state(st)
+                        print(f"martin: Paired {name}.")
+                        return True
+                    if action == "use":
+                        name = " ".join(args[1:]).strip()
+                        if not name:
+                            print("martin: Use /host use <name>.")
+                            return True
+                        if not any(d.get("name") == name for d in devices):
+                            print("martin: Device not found.")
+                            return True
+                        st["current_host"] = name
+                        save_state(st)
+                        print(f"martin: Active host set to {name}.")
+                        return True
+                    print("martin: Use /host list|pair <name>|use <name>.")
+                    return True
+                if name == "remote":
+                    if not args:
+                        print("martin: Use /remote start|stop|status|config.")
+                        return True
+                    action = args[0].lower()
+                    if action == "start":
+                        v = validate_transport(cfg)
+                        if not v.get("ok"):
+                            print(f"martin: Remote transport missing {', '.join(v.get('missing', []))}.")
+                            return True
+                        resp = start_tunnel(cfg)
+                        if resp.get("ok"):
+                            print(f"martin: Remote tunnel started (pid {resp.get('pid')}).")
+                        else:
+                            print(f"martin: Remote tunnel start failed ({resp.get('error')}).")
+                        return True
+                    if action == "stop":
+                        resp = stop_tunnel(cfg)
+                        if resp.get("ok"):
+                            print("martin: Remote tunnel stopped.")
+                        else:
+                            print(f"martin: Remote tunnel stop failed ({resp.get('error')}).")
+                        return True
+                    if action == "status":
+                        resp = status_tunnel(cfg)
+                        resp["validation"] = validate_transport(cfg)
+                        print(json.dumps(resp, ensure_ascii=False, indent=2))
+                        return True
+                    if action == "config":
+                        st = load_state()
+                        overrides = st.get("remote_transport_overrides", {}) if isinstance(st, dict) else {}
+                        if len(args) == 1 or args[1].lower() == "show":
+                            print(json.dumps({"overrides": overrides}, ensure_ascii=False, indent=2))
+                            return True
+                        if args[1].lower() == "set":
+                            if len(args) < 4:
+                                print("martin: Use /remote config set <key> <value>.")
+                                return True
+                            key = args[2].strip()
+                            val = " ".join(args[3:]).strip()
+                            current = st.get("current_host", "local")
+                            if not current:
+                                current = "local"
+                            overrides = overrides if isinstance(overrides, dict) else {}
+                            host_cfg = overrides.get(current, {}) or {}
+                            host_cfg[key] = val
+                            overrides[current] = host_cfg
+                            st["remote_transport_overrides"] = overrides
+                            save_state(st)
+                            print(f"martin: Remote config set for {current}.")
+                            return True
+                        print("martin: Use /remote config show|set <key> <value>.")
+                        return True
+                    print("martin: Use /remote start|stop|status|config.")
+                    return True
+                if name == "redaction":
+                    if not args or args[0].lower() != "report":
+                        print("martin: Use /redaction report [days].")
+                        return True
+                    days = 30
+                    if len(args) > 1:
+                        try:
+                            days = int(args[1])
+                        except Exception:
+                            days = 30
+                    cutoff = time.time() - (days * 86400)
+                    total = 0
+                    redacted = 0
+                    try:
+                        if LEDGER_FILE.exists():
+                            with open(LEDGER_FILE, "r", encoding="utf-8") as f:
+                                for line in f:
+                                    try:
+                                        row = json.loads(line)
+                                        entry = row.get("entry", {})
+                                        ts = entry.get("ts", "")
+                                        if ts:
+                                            dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                                            if dt.timestamp() < cutoff:
+                                                continue
+                                        total += 1
+                                        data = entry.get("data", {}) or {}
+                                        if data.get("redacted") or data.get("sanitized"):
+                                            redacted += 1
+                                    except Exception:
+                                        continue
+                    except Exception:
+                        pass
+                    report = {"window_days": days, "entries": total, "redacted_entries": redacted}
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                    return True
+                if name == "trust":
+                    if not args or args[0].lower() != "keygen":
+                        print("martin: Use /trust keygen.")
+                        return True
+                    try:
+                        from researcher.crypto_utils import generate_key
+                        key = generate_key()
+                        print("martin: New encryption key:")
+                        print(key)
+                    except Exception as e:
+                        print(f"martin: Keygen failed ({e})")
+                    return True
+                if name == "encrypt":
+                    if not args:
+                        print("martin: Use /encrypt <path>.")
+                        return True
+                    path = Path(" ".join(args)).expanduser()
+                    key_env = (cfg.get("trust_policy", {}) or {}).get("encryption_key_env", "MARTIN_ENCRYPTION_KEY")
+                    key = os.environ.get(key_env or "")
+                    if not key:
+                        print("martin: Encryption key not set; set env first.")
+                        return True
+                    try:
+                        from researcher.crypto_utils import encrypt_text
+                        raw = path.read_text(encoding="utf-8")
+                        enc = encrypt_text(raw, key)
+                        out_path = path.with_suffix(path.suffix + ".enc")
+                        if preview_write(out_path, enc):
+                            out_path.write_text(enc, encoding="utf-8")
+                            print(f"martin: Encrypted to {out_path}")
+                    except Exception as e:
+                        print(f"martin: Encrypt failed ({e})")
+                    return True
+                if name == "decrypt":
+                    if not args:
+                        print("martin: Use /decrypt <path>.")
+                        return True
+                    path = Path(" ".join(args)).expanduser()
+                    key_env = (cfg.get("trust_policy", {}) or {}).get("encryption_key_env", "MARTIN_ENCRYPTION_KEY")
+                    key = os.environ.get(key_env or "")
+                    if not key:
+                        print("martin: Encryption key not set; set env first.")
+                        return True
+                    try:
+                        from researcher.crypto_utils import decrypt_text
+                        raw = path.read_text(encoding="utf-8")
+                        dec = decrypt_text(raw, key)
+                        out_path = path.with_suffix(".dec")
+                        if preview_write(out_path, dec):
+                            out_path.write_text(dec, encoding="utf-8")
+                            print(f"martin: Decrypted to {out_path}")
+                    except Exception as e:
+                        print(f"martin: Decrypt failed ({e})")
+                    return True
+                if name == "rotate":
+                    if len(args) < 3:
+                        print("martin: Use /rotate <path> <old_env> <new_env>.")
+                        return True
+                    path = Path(args[0]).expanduser()
+                    old_env = args[1]
+                    new_env = args[2]
+                    old_key = os.environ.get(old_env or "")
+                    new_key = os.environ.get(new_env or "")
+                    if not old_key or not new_key:
+                        print("martin: Missing old/new keys in env.")
+                        return True
+                    try:
+                        from researcher.crypto_utils import decrypt_text, encrypt_text
+                        raw = path.read_text(encoding="utf-8")
+                        dec = decrypt_text(raw, old_key)
+                        enc = encrypt_text(dec, new_key)
+                        out_path = path.with_suffix(path.suffix + ".rotated")
+                        if preview_write(out_path, enc):
+                            out_path.write_text(enc, encoding="utf-8")
+                            print(f"martin: Rotated key output {out_path}")
+                    except Exception as e:
+                        print(f"martin: Rotate failed ({e})")
+                    return True
                 if name == "export":
                     if not args:
                         print("martin: Use /export session <path>.")
@@ -1639,6 +2394,21 @@ def cmd_chat(cfg, args) -> int:
                     }
                     try:
                         content = json.dumps(bundle, ensure_ascii=False, indent=2) + "\n"
+                        try:
+                            st = load_state()
+                            current_host = st.get("current_host", "") if isinstance(st, dict) else ""
+                        except Exception:
+                            current_host = ""
+                        enc_cfg = _encryption_policy(cfg, current_host)
+                        if enc_cfg.get("encrypt"):
+                            from researcher.crypto_utils import encrypt_text
+                            key_env = enc_cfg.get("key_env")
+                            key = os.environ.get(key_env or "")
+                            if not key:
+                                print("martin: Encryption key not set; export blocked.")
+                                return True
+                            content = encrypt_text(content, key)
+                            out_path = out_path + ".enc" if not out_path.endswith(".enc") else out_path
                         if preview_write(Path(out_path), content):
                             Path(out_path).write_text(content, encoding="utf-8")
                             print(f"martin: Exported session to {out_path}")
@@ -1646,6 +2416,37 @@ def cmd_chat(cfg, args) -> int:
                             print("martin: Export cancelled.")
                     except Exception as e:
                         print(f"martin: Export failed ({e})")
+                    return True
+                if name == "import":
+                    if not args:
+                        print("martin: Use /import session <path>.")
+                        return True
+                    if args[0].lower() != "session":
+                        print("martin: Use /import session <path>.")
+                        return True
+                    in_path = args[1] if len(args) > 1 else ""
+                    if not in_path:
+                        print("martin: Use /import session <path>.")
+                        return True
+                    try:
+                        content = Path(in_path).read_text(encoding="utf-8")
+                        bundle = json.loads(content)
+                    except Exception as e:
+                        print(f"martin: Import failed ({e})")
+                        return True
+                    try:
+                        st = load_state()
+                        st["context_cache"] = bundle.get("context_cache", {}) or {}
+                        st["tasks"] = bundle.get("tasks", []) or []
+                        st["resume_snapshot"] = {
+                            "ts": bundle.get("ts", ""),
+                            "context_cache": bundle.get("context_cache", {}) or {},
+                            "transcript_tail": bundle.get("transcript_tail", []) or [],
+                        }
+                        save_state(st)
+                        print("martin: Session import complete.")
+                    except Exception as e:
+                        print(f"martin: Import failed ({e})")
                     return True
                 if name == "librarian":
                     if not args:
@@ -1773,6 +2574,8 @@ def cmd_chat(cfg, args) -> int:
                         context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
                         st = load_state()
                         st["context_cache"] = context_cache
+                        if behavior_flags.get("context_block"):
+                            st["active_context"] = _build_active_context(st)
                         save_state(st)
                         chat_ui.print_context_summary(context_cache)
                         return True
@@ -1792,9 +2595,33 @@ def cmd_chat(cfg, args) -> int:
                             payload["context_diff"] = {
                                 "new_recent_files": sorted(list(curr_recent - prev_recent))[:20]
                             }
+                        if behavior_flags.get("context_block"):
+                            payload["active_context"] = _build_active_context(st)
                     except Exception:
                         pass
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return True
+                if name == "goal":
+                    st = load_state()
+                    if not args or args[0].lower() == "status":
+                        print(json.dumps({"active_goal": st.get("active_goal", "")}, ensure_ascii=False, indent=2))
+                        return True
+                    action = args[0].lower()
+                    if action == "set":
+                        text = " ".join(args[1:]).strip()
+                        if not text:
+                            print("martin: Use /goal set <text>.")
+                            return True
+                        st["active_goal"] = text
+                        save_state(st)
+                        print("martin: Goal updated.")
+                        return True
+                    if action == "clear":
+                        st["active_goal"] = ""
+                        save_state(st)
+                        print("martin: Goal cleared.")
+                        return True
+                    print("martin: Use /goal status|set <text>|clear.")
                     return True
                 if name == "agent":
                     if not args:
@@ -1910,6 +2737,26 @@ def cmd_chat(cfg, args) -> int:
 
             if turn_bar: turn_bar.update(1)
             step_details = decide_next_step(user_input)
+            try:
+                intent_raw = step_details.get("user_intent_summary", "") or ""
+                intent_sanitized, changed = sanitize.sanitize_prompt(intent_raw)
+                intent_summary = chat_ui.shorten_output(intent_sanitized, max_len=200)
+                logger.info(
+                    "decision behavior=%s questions=%d redacted=%s",
+                    step_details.get("behavior"),
+                    len(step_details.get("question_summaries") or []),
+                    changed,
+                )
+                log_event(
+                    load_state(),
+                    "decision",
+                    behavior=step_details.get("behavior"),
+                    questions_count=len(step_details.get("question_summaries") or []),
+                    intent_summary=intent_summary,
+                    redacted=changed,
+                )
+            except Exception:
+                pass
             log_event(st, "next_step_decision", details=step_details)
 
             if turn_bar: turn_bar.update(1)
@@ -1984,6 +2831,8 @@ def cmd_chat(cfg, args) -> int:
                 "If behavior = build/run/diagnose, output precise steps only if truly warranted.\n"
                 "If behavior = review, focus on bugs, risks, regressions, and missing tests; be concise and specific.\n"
                 "If behavior = review, format output with sections: Findings, Questions, Tests. Use bullets under Findings.\n"
+                "Clarification policy: ask only when blocked; otherwise proceed and state your assumptions.\n"
+                "Cadence: progress note -> actions -> results (keep it tight).\n"
                 "Do not mention internal analysis, guidance, or behavior classification."
             )
             payload = {
@@ -1998,6 +2847,14 @@ def cmd_chat(cfg, args) -> int:
             bot_json = _post_responses(payload, label="Main") # Use llm_utils's post_responses
             bot_response = _extract_output_text(bot_json) or ""
             interaction_history.append("martin: " + bot_response)
+            if verbose_logging:
+                try:
+                    summary, redacted = _summarize_text(bot_response, max_len=240)
+                    if summary:
+                        logger.info("assistant_output summary=%s redacted=%s", summary, redacted)
+                    log_event(load_state(), "assistant_output", summary=summary, redacted=redacted)
+                except Exception:
+                    pass
 
             if turn_bar: turn_bar.update(1)
             if turn_bar: turn_bar.close()
@@ -2100,9 +2957,32 @@ def cmd_chat(cfg, args) -> int:
                 if not _privacy_enabled():
                     st = load_state()
                     st["session_memory"] = {"transcript": session_transcript[-200:]}
+                    if behavior_flags.get("summaries"):
+                        summary, _ = _summarize_text(bot_response, max_len=160)
+                        if summary:
+                            st["last_action_summary"] = f"responded: {summary}"
+                    if behavior_flags.get("context_block"):
+                        st["active_context"] = _build_active_context(st)
                     save_state(st)
             except Exception:
                 pass
+            if behavior_flags.get("summaries"):
+                try:
+                    st = load_state()
+                    summary = st.get("last_action_summary", "")
+                    next_action = ""
+                    tasks = st.get("tasks", []) if isinstance(st.get("tasks"), list) else []
+                    if tasks:
+                        next_action = tasks[0].get("text", "")
+                    if summary:
+                        line = f"martin: Summary: {summary}"
+                        if next_action:
+                            line += f" | Next: {next_action}"
+                        print(line)
+                except Exception:
+                    pass
+            if ui_flags.get("footer"):
+                _render_footer()
 
             def _parse_internal_cmd(c: str) -> Tuple[Optional[str], Optional[str]]:
                 s = c.strip()
@@ -2120,12 +3000,28 @@ def cmd_chat(cfg, args) -> int:
 
             terminal_commands = extract_commands(bot_response) if "command:" in bot_response.lower() else [] # Use researcher's extract_commands
             if terminal_commands:
-                print("\033[96mmartin: Rationale:\033[0m " + (user_input.strip() or "requested action"))
+                rationale_text = user_input.strip() or "requested action"
+                print("\033[96mmartin: Rationale:\033[0m " + rationale_text)
+                try:
+                    summary, redacted = _summarize_text(rationale_text, max_len=160)
+                    st = load_state()
+                    st["last_plan_rationale"] = summary
+                    save_state(st)
+                    log_event(load_state(), "plan_rationale", summary=summary, redacted=redacted)
+                except Exception:
+                    pass
                 print("\n\033[96mmartin: Proposed command plan (review):\033[0m")
                 risk_info = []
                 for c in terminal_commands:
                     risk = classify_command_risk(c, command_allowlist, command_denylist)
                     risk_info.append(risk)
+                if verbose_logging:
+                    try:
+                        sanitized_cmds, redacted = _sanitize_command_list(terminal_commands)
+                        log_event(load_state(), "plan_proposed", count=len(terminal_commands), cmds=sanitized_cmds, redacted=redacted)
+                        logger.info("plan_proposed count=%d redacted=%s", len(terminal_commands), redacted)
+                    except Exception:
+                        pass
                 for i, (c, risk) in enumerate(zip(terminal_commands, risk_info), 1):
                     tag = "" if risk["level"] == "low" else f" [{risk['level'].upper()}]"
                     print(f"  {i}. {c}{tag}")
@@ -2197,6 +3093,7 @@ def cmd_chat(cfg, args) -> int:
             try:
                 st = load_state()
                 st["last_plan"] = {"steps": terminal_commands, "status": "pending"}
+                _maybe_set_plan_tasks(st, terminal_commands)
                 save_state(st)
             except Exception:
                 pass
@@ -2280,6 +3177,7 @@ def cmd_chat(cfg, args) -> int:
                 if ok:
                     step["status"] = "ok"
                     successes_this_turn += 1
+                    _maybe_advance_plan_task(ok)
                     output_path = ""
                     if output:
                         stored = _store_long_output(output, "cmd") if not _privacy_enabled() else ""
@@ -2560,13 +3458,39 @@ def cmd_chat(cfg, args) -> int:
             try:
                 st = load_state()
                 st["last_plan"] = {"steps": terminal_commands, "status": "complete", "ok": successes_this_turn, "fail": failures_this_turn}
+                if behavior_flags.get("summaries"):
+                    st["last_action_summary"] = f"ran {len(terminal_commands)} command(s): OK {successes_this_turn}, FAIL {failures_this_turn}"
+                if behavior_flags.get("context_block"):
+                    st["active_context"] = _build_active_context(st)
                 save_state(st)
             except Exception:
                 pass
+            if behavior_flags.get("summaries"):
+                try:
+                    st = load_state()
+                    summary = st.get("last_action_summary", "")
+                    next_action = ""
+                    tasks = st.get("tasks", []) if isinstance(st.get("tasks"), list) else []
+                    if tasks:
+                        next_action = tasks[0].get("text", "")
+                    if summary:
+                        line = f"martin: Summary: {summary}"
+                        if next_action:
+                            line += f" | Next: {next_action}"
+                        print(line)
+                except Exception:
+                    pass
         _mo_exit_check()
         _prompt_clock("Clock-out")
 
     finally:
+        if original_input is not None:
+            builtins.input = original_input
+        if test_bridge:
+            try:
+                test_bridge.stop()
+            except Exception:
+                pass
         server.stop()
 
     if args.transcript:
@@ -3140,4 +4064,12 @@ def handle_tui(cfg, args) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:
+        crash_path = _write_crash_log(exc)
+        if crash_path:
+            print(f"martin: Crash details saved to {crash_path}", file=sys.stderr)
+        raise

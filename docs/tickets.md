@@ -848,6 +848,39 @@ P20 ? UAT harness stability
 - [x] UX9: Task chaining expectations  
   Document task queueing, chaining, and stacked process expectations in behavior docs.  
   Acceptance: expected behavior and UX inventory mention queueing/chaining explicitly.
+- [x] UAT65: Behavior scenario prompt-first start  
+  Remove loop_ready waits in behavior socket scenario to avoid hangs on resumed sessions.  
+  Acceptance: behavior scenario waits on prompt events and starts reliably.
+- [x] UAT66: Behavior scenario mailbox mode  
+  Run behavior testing in mailbox mode to avoid auto-start approvals blocking prompt waits.  
+  Acceptance: behavior scenario completes without prompt wait timeouts.
+- [x] UAT67: Isolated state for behavior UAT  
+  Allow the state file path to be overridden for test runs.  
+  Acceptance: behavior UAT uses a dedicated state file without leaking active goals.
+- [x] UAT68: Handle logbook prompts in behavior UAT  
+  Add conditional responses for logbook handle and clock-in prompts in behavior scenario.  
+  Acceptance: behavior scenario proceeds without manual logbook input.
+- [x] UAT69: Logbook prompt socket parity  
+  Use the shared read_user_input for the logbook handle prompt so test sockets receive it.  
+  Acceptance: logbook prompt emits prompt events and accepts socket inputs.
+- [x] UAT70: Mailbox prompt-only immediate send  
+  Allow mailbox prompt-only inputs to send immediately when the current prompt matches.  
+  Acceptance: prompt-only inputs respond to already-visible prompts.
+- [x] UAT71: Flush pending on prompt events  
+  Trigger pending input checks whenever a prompt event arrives in mailbox mode.  
+  Acceptance: prompt-triggered inputs fire without waiting for the next mailbox tick.
+- [x] UAT72: Bypass prompt counts on current prompt  
+  If the latest prompt matches a pending input, allow it to send even when the prompt was already visible.  
+  Acceptance: mailbox prompt inputs respond to existing prompts.
+- [x] UAT73: Handle onboarding prompt in behavior UAT  
+  Add a conditional response for the onboarding completion prompt.  
+  Acceptance: behavior scenario proceeds without manual onboarding input.
+- [ ] BX9: Review mode request respects review formatting  
+  When `/review on` is active, a review request should return Findings/Questions/Tests even if a goal exists.  
+  Acceptance: review prompt yields structured review output without goal continuation prompts.
+- [ ] BX10: /goal clear clears active goal in agent mode  
+  Ensure `/goal clear` resets the active goal and removes it from the banner.  
+  Acceptance: goal line is empty after `/goal clear` in agent mode.
 - [x] UX7: Codex parity behavior section  
   Document Codex-style behavior expectations in `docs/expected_behavior.md`.  
   Acceptance: expected behavior doc lists Codex parity behaviors and UX inventory references it.

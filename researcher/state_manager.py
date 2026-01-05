@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import hashlib
 import datetime
@@ -7,10 +7,13 @@ from typing import Any, Dict, Optional, List
 
 from researcher import __version__
 from researcher import sanitize
+from researcher.config_loader import load_config
+from researcher.crypto_utils import encrypt_text, should_encrypt_logs
 
 # Define common paths for the researcher project
 ROOT_DIR = Path(__file__).resolve().parent.parent
-STATE_FILE = ROOT_DIR / ".researcher_state.json" # Renamed from .martin_state.json
+_ENV_STATE_PATH = os.environ.get("MARTIN_STATE_PATH") or os.environ.get("RESEARCHER_STATE_PATH")
+STATE_FILE = Path(_ENV_STATE_PATH) if _ENV_STATE_PATH else (ROOT_DIR / ".researcher_state.json") # Renamed from .martin_state.json
 LOG_DIR = ROOT_DIR / "logs"
 LEDGER_FILE = LOG_DIR / "researcher_ledger.ndjson" # Renamed from martin_ledger.ndjson
 
@@ -21,7 +24,7 @@ def _ensure_dirs() -> None:
 
 def _now_iso() -> str:
     """Returns the current UTC time in ISO 8601 format."""
-    return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 def _sha256_bytes(b: bytes) -> str:
     """Computes the SHA256 hash of a bytes object."""
@@ -42,6 +45,7 @@ def _read_json(path: Path, default: Any) -> Any:
 
 def _write_json(path: Path, data: Any) -> None:
     """Writes data to a JSON file atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -100,6 +104,25 @@ def append_ledger(st: Dict[str, Any], entry: Dict[str, Any]) -> None:
     payload = json.dumps(entry, ensure_ascii=False, separators=( ",", ":"))
     new_hash = _sha256_bytes(((prev_hash or "") + payload).encode("utf-8"))
     line = json.dumps({"entry": entry, "prev_hash": prev_hash, "hash": new_hash}, ensure_ascii=False)
+    try:
+        cfg = load_config()
+        if should_encrypt_logs(cfg, st):
+            key_env = (cfg.get("trust_policy", {}) or {}).get("encryption_key_env", "MARTIN_ENCRYPTION_KEY")
+            key = os.environ.get(key_env or "")
+            if not key:
+                return
+            secure_dir = LOG_DIR / "secure"
+            secure_dir.mkdir(parents=True, exist_ok=True)
+            secure_path = secure_dir / "researcher_ledger.enc"
+            enc_line = encrypt_text(line, key)
+            with open(secure_path, "a", encoding="utf-8") as f:
+                f.write(enc_line + "\n")
+            st["ledger"]["entries"] = int(st["ledger"].get("entries", 0)) + 1
+            st["ledger"]["last_hash"] = new_hash
+            save_state(st)
+            return
+    except Exception:
+        pass
     with open(LEDGER_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     st["ledger"]["entries"] = int(st["ledger"].get("entries", 0)) + 1

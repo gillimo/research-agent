@@ -1,0 +1,96 @@
+{
+  "env": {
+    "MARTIN_LOG_STDOUT": "1",
+    "MARTIN_STATE_PATH": "logs/uat_behavior_state.json"
+  },
+  "auto_wait": true,
+  "use_socket": true,
+  "socket_token": "uat-token",
+  "mailbox": true,
+  "mailbox_log": "logs/uat_behavior_mailbox.ndjson",
+  "mailbox_duration": 120,
+  "event_log": "logs/uat_behavior_events.ndjson",
+  "screenshot_dir": "logs/uat_behavior_snapshots",
+  "snapshot_lines": 50,
+  "steps": [
+    {
+      "input": "/goal clear",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "user",
+      "input_timeout": 10,
+      "input_when_prompt": "Handle for logbook"
+    },
+    {
+      "input": ".skip",
+      "input_timeout": 10,
+      "input_when_prompt": "Clock-in note"
+    },
+    {
+      "input": "/agent on",
+      "input_timeout": 15,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Approve running"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Command touches outside workspace"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Apply suggested fix commands now"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Mark onboarding complete"
+    },
+    {
+      "wait_for_prompt": "You:",
+      "timeout": 60
+    },
+    {
+      "input": "/review on",
+      "input_timeout": 15,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "please review this repo",
+      "input_timeout": 20,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/goal set audit ux parity",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/goal status",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "do it",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/goal clear",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/review off",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    }
+  ]
+}

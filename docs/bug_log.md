@@ -65,6 +65,17 @@ Bug Log
 - 2025-12-30: Heartbeat messages rendered in the main worklog panel; move a heartbeat summary below the main output in TUI.
 - 2025-12-30: Expected behavior doc did not explicitly cover task queueing/chaining parity; add explicit behavior expectations.
 - 2025-12-30: Remaining required verification is clean-machine validation for G4V/G5V (install/service scripts).
+- 2025-12-30: Behavior socket scenario could hang waiting for loop_ready in resumed sessions; rely on prompt events instead.
+- 2025-12-30: Behavior scenario needs mailbox mode to avoid auto-start approval prompts blocking prompt waits; switch to mailbox for reliability.
+- 2025-12-30: Behavior tests reuse persistent state, so active goals bleed into UAT runs; add state-path override for isolated test runs.
+- 2025-12-30: Behavior scenario stalled on logbook handle prompt; add conditional responses for handle/clock-in prompts.
+- 2025-12-30: Logbook handle prompt bypassed test socket because it used raw input(); route through read_user_input for socket parity.
+- 2025-12-30: Mailbox prompt-only inputs did not fire when the prompt already existed; allow immediate sends on current prompt.
+- 2025-12-30: Mailbox prompt events did not trigger pending input flush; flush pending inputs on prompt events.
+- 2025-12-30: Mailbox prompt gating still blocked when prompt existed before queue; bypass prompt counts when latest prompt matches.
+- 2025-12-30: Behavior scenario hit onboarding completion prompt; add conditional response for onboarding prompt.
+- 2025-12-30: Review mode request in agent mode did not yield structured review output; asked for goal continuation instead.
+- 2025-12-30: /goal clear did not clear the active goal during behavior run; goal persisted after clear.
 - 2025-12-30: Expected behavior doc missing explicit Codex parity behaviors; add a dedicated section and inventory line.
 - 2025-12-29: Unix path redaction regex used `[^\\s]` and left trailing characters; fixed to use `[^\\s]` with proper `\\s` handling.
 - 2025-12-29: Librarian chunking tests hung due to heavy FAISS/embedding load; added `RESEARCHER_FORCE_SIMPLE_INDEX` to force SimpleIndex in tests.
