@@ -33,5 +33,18 @@
       "-Command"
     ]
   },
-  "autoCompact": true
+  "autoCompact": true,
+  "mcpServers": {
+    "researcher": {
+      "type": "stdio",
+      "command": "python",
+      "env": [
+        "PYTHONPATH=."
+      ],
+      "args": [
+        "-u",
+        "scripts/mcp_researcher.py"
+      ]
+    }
+  }
 }

@@ -21,6 +21,9 @@ Current wiring (as implemented)
   - `opencode.local.md`
   - `AGENTS.md`
   - `docs/martin_operator_guide.md`
+- MCP bridge (stdio):
+  - `scripts/mcp_researcher.py` exposes `ask`, `ingest`, `status`, `librarian_status`
+  - `.opencode.json` registers the MCP server under `mcpServers.researcher`
 - Start OpenCode from this repo:
   - `.\scripts\opencode_martin.ps1`
 
@@ -35,6 +38,10 @@ Known gaps (next work)
 SocketBridge migration (current)
 - Researcher socket server now uses SocketBridge (length-prefixed JSON, auth/allowlist).
 - Requires `socketbridge` dependency in `requirements.txt`.
+
+OpenCode build/test (current)
+- Build script: `scripts/build_opencode.ps1`
+- Test plan: `docs/opencode_test_plan.md`
 
 Notes
 - OpenCode upstream repo is archived; plan whether to stay or move to its successor.

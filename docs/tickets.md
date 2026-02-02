@@ -118,7 +118,7 @@ P7 ? OpenCode CLI replacement
   Add opencode.local.md with Martin guardrails; ensure OpenCode loads it.
   Acceptance: contextPaths include opencode.local.md and AGENTS.md.
   Deps: OC2.
-- [ ] [OPENCODE] OC4: MCP bridge to Researcher
+- [~] [OPENCODE] OC4: MCP bridge to Researcher
   Expose researcher CLI as MCP tool for ask/ingest/status/librarian.
   Acceptance: OpenCode can call Researcher via MCP with approval prompts.
   Deps: OC2.
@@ -126,11 +126,11 @@ P7 ? OpenCode CLI replacement
   Map old CLI commands to OpenCode flows; define transition checklist.
   Acceptance: documented migration steps and rollback path.
   Deps: OC2, OC3.
-- [ ] [OPENCODE] OC6: Build + install automation (Windows)
+- [~] [OPENCODE] OC6: Build + install automation (Windows)
   Provide build script and local install wrapper for OpenCode.
   Acceptance: one command builds opencode.exe and launches from repo.
   Deps: OC1.
-- [ ] [OPENCODE][TEST] OC7: Migrate tests/validation to OpenCode
+- [~] [OPENCODE][TEST] OC7: Migrate tests/validation to OpenCode
   Port or re-run existing CLI verification steps for OpenCode-based flow.
   Acceptance: updated test plan + pass/fail checklist for OpenCode CLI.
   Deps: OC4, OC5.
