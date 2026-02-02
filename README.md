@@ -1,3 +1,8 @@
+Mission Learning Statement
+- Mission: Build a two-system research architecture with a local agent and a RAG-backed librarian.
+- Learning focus: retrieval pipelines, memory management, tool orchestration, and safe cloud handoffs.
+- Project start date: 2025-12-18 (inferred from earliest git commit)
+
 Research Agent Workspace
 ========================
 
