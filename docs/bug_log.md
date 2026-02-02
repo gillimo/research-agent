@@ -1,6 +1,24 @@
 Bug Log
 =======
 
+- 2026-01-31: Cloud quota errors now fall back to the local Ollama model; local-only is the default to prevent chat from stalling when OpenAI billing/quota is hit.
+- 2025-12-30: martin.log shows repeated `NameError: get_system_context` in `_extract_desktop_targets` during chat start; added defensive import/fallback to avoid crashes if the global import is missing.
+- 2025-12-30: martin.log shows `NameError: re` when formatting review responses; added a local `re` import inside `_format_review_response` to avoid closure issues.
+- 2025-12-30: Chat call failed with `Unsupported parameter: 'max_tokens'` on gpt-5; switch to `max_completion_tokens` for gpt-5 models.
+- 2025-12-30: Chat call failed with `Unsupported value: 'temperature'` on gpt-5; omit temperature for gpt-5 models (defaults only).
+- 2025-12-30: Chat returned no response after gpt-5 upgrade; switch gpt-5 calls to the Responses API and add response-format parsing for `output_text`/`output` payloads.
+- 2025-12-30: Responses API rejected `max_completion_tokens`; gpt-5 requires `max_output_tokens` in Responses API payload.
+- 2025-12-30: gpt-5 Responses API still yields empty output in mailbox behavior run; no assistant response produced despite successful request cycle (needs deeper response parsing or request format adjustment).
+- 2025-12-30: Behavior socket mailbox run timed out while a plan was executing; harness sent `quit` but the CLI did not exit before mailbox window ended.
+- 2025-12-30: Follow-up resolver treated slash commands and review-mode prompts as followups, overwriting intent and resetting goals; skip slash commands/review mode and tighten short-followup detection.
+- 2025-12-30: Review mode bypasses the structured Findings/Questions/Tests format when a response includes `command:` lines; review requests fall back to plan output without the expected headings.
+- 2025-12-30: Review-mode request asked for repo URL/path instead of using current workspace context.
+- 2025-12-30: Review formatting change introduced a NameError for `re` because of a local import in cmd_chat; removed the local import to use the module import.
+- 2025-12-30: Mailbox goal scenario queued `/goal clear` on a stale prompt; gated the step on "Done. OK" and restored prompt bypass for immediate "You:" sends.
+- 2025-12-30: Mailbox timeout scenario still exits during logbook/onboarding prompts; added mailbox start-on-prompt token but needs further tuning to avoid premature quit before reaching "You:".
+- 2025-12-30: Mailbox exit prompt can send a second approval response (e.g., "no") after a scenario already sent "yes" for the same prompt.
+- 2025-12-30: Timeout UAT now starts its mailbox timer on the "You:" prompt and uses a rerun command to simulate a long-running plan for exit testing.
+- 2025-12-30: Startup context harvest hangs in large non-repo directories; add fast context mode when no `.git` to skip deep scans.
 - 2025-12-30: UAT harness duplicated output in socket mode because stdout + socket streams were both captured; disabled stdout capture when socket mode is active.
 - 2025-12-30: ANSI prompt auto-wait was untested; added a harness test to cover ANSI prompt stripping and prompt regex matching.
 - 2025-12-30: Mailbox mode needed to avoid blocking waits and exit after a short window; harness now skips waits and auto-quits after `mailbox_duration`.

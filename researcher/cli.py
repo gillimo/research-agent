@@ -8,6 +8,7 @@ import sys
 import time
 import json # Added for main loop
 import traceback
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -140,7 +141,10 @@ def _ui_cfg(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
     except Exception:
         cfg = cfg or {}
     ui = cfg.get("ui", {}) or {}
-    return {"footer": bool(ui.get("footer", False))}
+    return {
+        "footer": bool(ui.get("footer", False)),
+        "startup_compact": bool(ui.get("startup_compact", False)),
+    }
 
 
 def _summarize_user_input(text: str, max_len: int = 200) -> Tuple[str, bool]:
@@ -182,12 +186,11 @@ def _is_short_followup(text: str) -> bool:
     lowered = (text or "").strip().lower()
     if not lowered:
         return False
-    tokens = [t for t in lowered.split() if t]
-    if len(tokens) <= 4:
-        if any(k in lowered for k in ("new goal", "change goal", "reset goal", "stop", "cancel")):
-            return False
+    if any(k in lowered for k in ("new goal", "change goal", "reset goal", "stop", "cancel")):
+        return False
+    if lowered in {"sounds good", "looks good", "all good", "go for it", "go ahead"}:
         return True
-    return False
+    return lowered in {"ok", "okay", "sure", "yes", "y", "yep", "yup", "fine"}
 
 
 def _ingest_allowlist(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -296,6 +299,8 @@ def _maybe_advance_plan_task(ok: bool) -> None:
 
 def _maybe_update_goal(st: Dict[str, Any], user_text: str, force: bool = False) -> None:
     if not user_text:
+        return
+    if user_text.strip().startswith("/"):
         return
     lowered = user_text.strip().lower()
     if "new goal:" in lowered or "goal:" in lowered:
@@ -507,7 +512,14 @@ def _extract_desktop_targets(text: str) -> List[str]:
     lowered = text.lower()
     if "desktop" not in lowered:
         return []
-    ctx = get_system_context()
+    try:
+        ctx = get_system_context()
+    except NameError:
+        try:
+            from researcher.system_context import get_system_context as _get_system_context
+            ctx = _get_system_context()
+        except Exception:
+            return []
     base = ""
     if "onedrive" in lowered and ctx.get("paths", {}).get("onedrive_desktop"):
         base = ctx["paths"]["onedrive_desktop"]
@@ -901,7 +913,7 @@ def cmd_ask(cfg, prompt: str, k: int, use_llm: bool = False, cloud_mode: str = "
 def cmd_chat(cfg, args) -> int:
     from tqdm import tqdm
     from researcher.command_utils import extract_commands, classify_command_risk, edit_commands_in_editor, edit_commands_inline
-    from researcher.llm_utils import _post_responses, _extract_output_text, MODEL_MAIN, interaction_history, diagnose_failure, current_username, rephraser
+    from researcher.llm_utils import _post_responses, _extract_output_text, MODEL_MAIN, MODEL_MINI, interaction_history, diagnose_failure, current_username, rephraser
     from researcher.orchestrator import decide_next_step, dispatch_internal_ability
     from researcher.resource_registry import list_resources, read_resource
     from researcher.runner import run_command_smart_capture, enforce_sandbox
@@ -913,6 +925,8 @@ def cmd_chat(cfg, args) -> int:
     from researcher.logbook_utils import append_logbook_entry
     import shlex
     import subprocess
+    ui_flags = _ui_cfg(cfg)
+    compact_startup = bool(ui_flags.get("startup_compact", False))
 
     def _handle_librarian_notification(message: Dict[str, Any]) -> None:
         try:
@@ -979,29 +993,102 @@ def cmd_chat(cfg, args) -> int:
             pass
         return delta
 
-    def _auto_context_surface(reason: str) -> None:
+    def _safe_json(text: str) -> Dict[str, Any]:
+        if not text:
+            return {}
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not m:
+            return {}
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return {}
+
+    def _plan_action_queue(prompt: str, ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+        sanitized, _changed = sanitize.sanitize_prompt(prompt or "")
+        ctx_summary = {
+            "root": ctx.get("root"),
+            "git": (ctx.get("git_status") or "").splitlines()[:1],
+            "recent_files": ctx.get("recent_files", [])[:5],
+        }
+        planner_sys = (
+            "You are a concise planning assistant. "
+            "Return JSON only with keys: queue, checkins, assumptions. "
+            "queue is a list of 3-7 ordered steps with fields: title, action, command, blocking, success. "
+            "Use command only when a shell command is needed; otherwise empty string. "
+            "Keep actions short and practical."
+        )
+        planner_user = (
+            f"User request:\n{sanitized}\n\n"
+            f"Context:\n{json.dumps(ctx_summary, ensure_ascii=False)}\n\n"
+            "Return JSON only."
+        )
+        payload = {
+            "model": MODEL_MINI,
+            "input": [
+                {"role": "system", "content": planner_sys},
+                {"role": "user", "content": planner_user},
+            ],
+            "temperature": 0.2,
+            "max_output_tokens": 600,
+        }
+        resp = _post_responses(payload, label="Planner")
+        text = _extract_output_text(resp) or ""
+        data = _safe_json(text)
+        queue = data.get("queue")
+        return queue if isinstance(queue, list) else []
+
+    def _render_action_queue(queue: List[Dict[str, Any]]) -> None:
+        if not queue:
+            print("martin: Action queue is empty.")
+            return
+        print("martin: Action queue")
+        for idx, item in enumerate(queue, 1):
+            title = (item.get("title") or "").strip() or "step"
+            action = (item.get("action") or "").strip()
+            command = (item.get("command") or "").strip()
+            blocking = item.get("blocking")
+            line = f"{idx}. {title}"
+            if action:
+                line += f" - {action}"
+            if command:
+                line += f" | command: {command}"
+            if blocking is True:
+                line += " | blocking"
+            print(line)
+        next_title = (queue[0].get("title") or "").strip() if queue else ""
+        if next_title:
+            print(f"martin: Summary: queued {len(queue)} steps. Next: {next_title}.")
+
+    def _auto_context_surface(reason: str, quiet: bool = False) -> None:
         nonlocal context_cache
         try:
             st = load_state()
             prev = st.get("context_cache", {}) if isinstance(st, dict) else {}
             from researcher.context_harvest import gather_context
-            context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+            fast_ctx = not (Path.cwd() / ".git").exists()
+            context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)), fast=fast_ctx)
             st = load_state()
             st["context_cache"] = context_cache
             save_state(st)
             delta = _context_delta(prev if isinstance(prev, dict) else {}, context_cache)
-            print(f"\033[96mmartin: Context update ({reason})\033[0m")
-            chat_ui.print_context_summary(context_cache)
-            if delta:
-                parts = []
-                new_files = delta.get("new_recent_files") or []
-                if new_files:
-                    parts.append(f"new files: {len(new_files)}")
-                git_status = delta.get("git_status")
-                if git_status:
-                    parts.append(f"git: {git_status}")
-                if parts:
-                    print("martin: Context changes - " + " | ".join(parts))
+            if not quiet:
+                print(f"\033[96mmartin: Context update ({reason})\033[0m")
+                chat_ui.print_context_summary(context_cache)
+                if delta:
+                    parts = []
+                    new_files = delta.get("new_recent_files") or []
+                    if new_files:
+                        parts.append(f"new files: {len(new_files)}")
+                    git_status = delta.get("git_status")
+                    if git_status:
+                        parts.append(f"git: {git_status}")
+                    if parts:
+                        print("martin: Context changes - " + " | ".join(parts))
         except Exception:
             pass
     def _run_onboarding() -> None:
@@ -1046,13 +1133,58 @@ def cmd_chat(cfg, args) -> int:
             checks.append(("last_test", f"{'ok' if last_test.get('ok') else 'fail'} {last_test.get('ts','')}"))
         else:
             checks.append(("last_test", "none (run /tests)"))
-        print("\033[96mmartin: Preflight checks\033[0m")
-        for key, val in checks:
-            print(f"- {key}: {val}")
+        if compact_startup:
+            summary = " | ".join(f"{key}={val}" for key, val in checks)
+            print(f"martin: Preflight {summary}")
+        else:
+            print("\033[96mmartin: Preflight checks\033[0m")
+            for key, val in checks:
+                print(f"- {key}: {val}")
         missing = [c for c in checks if c[1] in ("missing", "none (run /tests)")]
         if missing:
-            print("martin: Next steps: address missing items before heavy changes.")
+            if compact_startup:
+                missing_list = ", ".join(name for name, _ in missing)
+                print(f"martin: Missing: {missing_list}")
+            else:
+                print("martin: Next steps: address missing items before heavy changes.")
+        if not compact_startup:
+            print("martin: Quickstart: /verify, /tests, docs/tickets.md, /help")
+            print("martin: Logs: logs/martin.log, logs/researcher_ledger.ndjson")
         append_worklog("plan", "preflight checks complete")
+
+    def _startup_progress(step: int, total: int, label: str, status: str) -> None:
+        bar_len = 10
+        filled = int((step / total) * bar_len)
+        bar = "#" * filled + "-" * (bar_len - filled)
+        print(f"martin: Startup [{bar}] {step}/{total} {label} {status}")
+
+    def _work_status(label: str) -> None:
+        if not sys.stdout.isatty():
+            print(f"martin: Working: {label}")
+            return
+        print(f"\rmartin: Working: {label}", end="", flush=True)
+
+    def _work_status_done() -> None:
+        if not sys.stdout.isatty():
+            return
+        print("\r" + (" " * 120) + "\r", end="", flush=True)
+
+    def _work_spinner(label: str, stop_event: threading.Event, label_ref: Optional[Dict[str, str]] = None) -> threading.Thread:
+        if not sys.stdout.isatty():
+            _work_status(label)
+            return threading.Thread()
+        def _spin() -> None:
+            frames = ["|", "/", "-", "\\"]
+            idx = 0
+            while not stop_event.is_set():
+                current = (label_ref.get("label") if label_ref else None) or label
+                print(f"\rmartin: Working: {current} {frames[idx % len(frames)]}", end="", flush=True)
+                idx += 1
+                time.sleep(0.25)
+            _work_status_done()
+        t = threading.Thread(target=_spin, daemon=True)
+        t.start()
+        return t
 
     def _ensure_handle() -> str:
         st = load_state()
@@ -1118,14 +1250,19 @@ def cmd_chat(cfg, args) -> int:
     def _format_review_response(text: str) -> str:
         if not text:
             return "Findings:\n- None.\n\nQuestions:\n- None.\n\nTests:\n- Not run."
-        lower = text.lower()
+        import re as _re
+        cmd_re = _re.compile(r"^\s*command:\s*.+", _re.IGNORECASE)
+        lines = text.splitlines()
+        cmd_lines = [line for line in lines if cmd_re.match(line)]
+        body_lines = [line for line in lines if not cmd_re.match(line)]
+        body = "\n".join(body_lines).strip()
+        lower = body.lower()
         has_findings = "findings" in lower
         has_questions = "questions" in lower
         has_tests = "tests" in lower or "testing" in lower
         if has_findings and has_questions and has_tests:
             return text
-        body = text.strip()
-        return (
+        formatted = (
             "Findings:\n"
             "- " + (body.replace("\n", "\n- ") if body else "None.") + "\n\n"
             "Questions:\n"
@@ -1133,6 +1270,16 @@ def cmd_chat(cfg, args) -> int:
             "Tests:\n"
             "- Not run."
         )
+        if cmd_lines:
+            formatted = formatted + "\n\n" + "\n".join(cmd_lines)
+        return formatted
+
+    def _print_output_summary(output: str, label: str = "Output summary") -> None:
+        if not output:
+            return
+        summary, _redacted = _summarize_text(output, max_len=220)
+        if summary:
+            print(f"martin: {label}: {summary}")
 
     def _outside_workspace_path(cmd: str) -> Optional[str]:
         ws = Path.cwd().resolve()
@@ -1250,6 +1397,10 @@ def cmd_chat(cfg, args) -> int:
             print(_format_output_for_display(stdout))
         if stderr:
             print(_format_output_for_display(stderr), file=sys.stderr)
+        combined_output = stdout or ""
+        if stderr:
+            combined_output = (combined_output + "\n" + stderr).strip()
+        _print_output_summary(combined_output)
         if rc and rc != 0:
             _record_failed_command(cmd, rc, stderr or "failed")
         if not _privacy_enabled():
@@ -1303,6 +1454,8 @@ def cmd_chat(cfg, args) -> int:
     def _maybe_prompt_retry() -> None:
         if _privacy_enabled():
             return
+        if compact_startup and not (Path.cwd() / ".git").exists():
+            return
         try:
             st = load_state()
             last_fail = st.get("last_failed_command", {})
@@ -1319,7 +1472,8 @@ def cmd_chat(cfg, args) -> int:
     server = SocketServer(
         host=socket_server_cfg.get("host"),
         port=socket_server_cfg.get("port"),
-        handler=_handle_librarian_notification
+        handler=_handle_librarian_notification,
+        verbose=bool(socket_server_cfg.get("verbose", False)),
     )
     server.start()
     test_bridge = None
@@ -1352,14 +1506,23 @@ def cmd_chat(cfg, args) -> int:
             save_state(st)
         except Exception:
             pass
+        total_steps = 4
+        _startup_progress(1, total_steps, "preflight", "start")
         _mo_preflight_check()
+        _startup_progress(1, total_steps, "preflight", "done")
+        _startup_progress(2, total_steps, "clock-in", "start")
         _prompt_clock("Clock-in")
-        _auto_context_surface("session start")
+        _startup_progress(2, total_steps, "clock-in", "done")
+        _startup_progress(3, total_steps, "context", "start")
+        _auto_context_surface("session start", quiet=compact_startup)
+        _startup_progress(3, total_steps, "context", "done")
         _maybe_prompt_retry()
         try:
             st = load_state()
+            _startup_progress(4, total_steps, "onboarding", "start")
             if not st.get("onboarding_complete"):
                 _run_onboarding()
+            _startup_progress(4, total_steps, "onboarding", "done")
         except Exception:
             pass
         logger = _get_cli_logger(cfg)
@@ -1442,7 +1605,8 @@ def cmd_chat(cfg, args) -> int:
         try:
             if not context_cache:
                 from researcher.context_harvest import gather_context
-                context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                fast_ctx = not (Path.cwd() / ".git").exists()
+                context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)), fast=fast_ctx)
                 st = load_state()
                 st["context_cache"] = context_cache
                 save_state(st)
@@ -1504,7 +1668,8 @@ def cmd_chat(cfg, args) -> int:
         try:
             if cfg.get("context", {}).get("auto"):
                 from researcher.context_harvest import gather_context
-                context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                fast_ctx = not (Path.cwd() / ".git").exists()
+                context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)), fast=fast_ctx)
                 st = load_state()
                 st["context_cache"] = context_cache
                 save_state(st)
@@ -1562,13 +1727,16 @@ def cmd_chat(cfg, args) -> int:
             except Exception:
                 pass
             try:
-                if not _privacy_enabled_state() and behavior_flags.get("followup_resolver") and (_is_followup(original_user_input) or (_is_short_followup(original_user_input) and load_state().get("active_goal"))):
-                    st = load_state()
-                    goal = st.get("active_goal", "") if isinstance(st, dict) else ""
-                    last_action = st.get("last_action_summary", "") if isinstance(st, dict) else ""
-                    if goal:
-                        user_input = f"Continue the active goal: {goal}. Last action: {last_action}"
-                        log_event(load_state(), "followup_resolved", goal=goal, last_action=last_action)
+                if not _privacy_enabled_state() and behavior_flags.get("followup_resolver"):
+                    if not original_user_input.strip().startswith("/"):
+                        st = load_state()
+                        if not st.get("review_mode"):
+                            goal = st.get("active_goal", "") if isinstance(st, dict) else ""
+                            if _is_followup(original_user_input) or (_is_short_followup(original_user_input) and goal):
+                                last_action = st.get("last_action_summary", "") if isinstance(st, dict) else ""
+                                if goal:
+                                    user_input = f"Continue the active goal: {goal}. Last action: {last_action}"
+                                    log_event(load_state(), "followup_resolved", goal=goal, last_action=last_action)
             except Exception:
                 pass
             try:
@@ -1630,6 +1798,14 @@ def cmd_chat(cfg, args) -> int:
                     print("martin: Worklog (last 10)")
                     for entry in items:
                         print(f"- {entry.get('ts','')} {entry.get('kind','')}: {entry.get('text','')}")
+                    return True
+                if name == "queue":
+                    try:
+                        st = load_state()
+                        queue = st.get("action_queue", []) if isinstance(st, dict) else []
+                    except Exception:
+                        queue = []
+                    _render_action_queue(queue if isinstance(queue, list) else [])
                     return True
                 if name == "clock":
                     sub = args[0].lower() if args else ""
@@ -2571,7 +2747,8 @@ def cmd_chat(cfg, args) -> int:
                 if name == "context":
                     if args and args[0].lower() == "refresh":
                         from researcher.context_harvest import gather_context
-                        context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                        fast_ctx = not (Path.cwd() / ".git").exists()
+                        context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)), fast=fast_ctx)
                         st = load_state()
                         st["context_cache"] = context_cache
                         if behavior_flags.get("context_block"):
@@ -2581,7 +2758,8 @@ def cmd_chat(cfg, args) -> int:
                         return True
                     if not context_cache:
                         from researcher.context_harvest import gather_context
-                        context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)))
+                        fast_ctx = not (Path.cwd() / ".git").exists()
+                        context_cache = gather_context(Path.cwd(), max_recent=int(cfg.get("context", {}).get("max_recent", 10)), fast=fast_ctx)
                         st = load_state()
                         st["context_cache"] = context_cache
                         save_state(st)
@@ -2737,6 +2915,20 @@ def cmd_chat(cfg, args) -> int:
 
             if turn_bar: turn_bar.update(1)
             step_details = decide_next_step(user_input)
+            plan_queue: List[Dict[str, Any]] = []
+            if step_details.get("behavior") == "plan":
+                try:
+                    plan_queue = _plan_action_queue(user_input, context_cache)
+                    if plan_queue:
+                        st = load_state()
+                        st["action_queue"] = plan_queue
+                        st["action_queue_ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        save_state(st)
+                        log_event(st, "action_queue", count=len(plan_queue))
+                        if len(plan_queue) > 3:
+                            _render_action_queue(plan_queue)
+                except Exception:
+                    plan_queue = []
             try:
                 intent_raw = step_details.get("user_intent_summary", "") or ""
                 intent_sanitized, changed = sanitize.sanitize_prompt(intent_raw)
@@ -2814,9 +3006,17 @@ def cmd_chat(cfg, args) -> int:
             except Exception:
                 last_cmd_summary = {}
             behavior_mode = "review" if review_mode else step_details.get("behavior", "chat")
+            queue_ctx = []
+            if plan_queue:
+                queue_ctx = plan_queue
+            else:
+                try:
+                    queue_ctx = load_state().get("action_queue", []) or []
+                except Exception:
+                    queue_ctx = []
             main_user = (
                 "Context (do not repeat):\n"
-                f"{json.dumps({'user_intent': step_details.get('user_intent_summary'), 'capability_inventory': step_details.get('inventory', []), 'snapshot': step_details.get('snapshot', {}), 'system': sys_ctx, 'memory': mem_ctx, 'last_command': last_cmd_summary}, ensure_ascii=False, indent=2)}\n\n"
+                f"{json.dumps({'user_intent': step_details.get('user_intent_summary'), 'capability_inventory': step_details.get('inventory', []), 'snapshot': step_details.get('snapshot', {}), 'system': sys_ctx, 'memory': mem_ctx, 'last_command': last_cmd_summary, 'action_queue': queue_ctx}, ensure_ascii=False, indent=2)}\n\n"
                 "Guidance (do not repeat):\n"
                 f"{step_details.get('guidance_banner', '')}\n\n"
                 "Behavior (do not repeat):\n"
@@ -2828,9 +3028,11 @@ def cmd_chat(cfg, args) -> int:
                 "When you decide to execute an action, adopt a helpful and proactive tone, like 'Let me handle that for you,' before providing the `command:` line.\n"
                 "If the user asks to inspect files, run tools, or check system state, include `command:` lines.\n"
                 "If behavior = chat, respond directly to the user with a helpful reply, but follow the CRITICAL rule above.\n"
+                "If behavior = plan, produce an ordered checklist with time cues and a check-in cadence; confirm you will track progress and keep it concise.\n"
                 "If behavior = build/run/diagnose, output precise steps only if truly warranted.\n"
                 "If behavior = review, focus on bugs, risks, regressions, and missing tests; be concise and specific.\n"
                 "If behavior = review, format output with sections: Findings, Questions, Tests. Use bullets under Findings.\n"
+                "If behavior = review and the user says 'this repo' without a path, assume the current workspace is the target.\n"
                 "Clarification policy: ask only when blocked; otherwise proceed and state your assumptions.\n"
                 "Cadence: progress note -> actions -> results (keep it tight).\n"
                 "Do not mention internal analysis, guidance, or behavior classification."
@@ -2844,7 +3046,14 @@ def cmd_chat(cfg, args) -> int:
                 "temperature": 0.4,
                 "max_output_tokens": 1200,
             }
-            bot_json = _post_responses(payload, label="Main") # Use llm_utils's post_responses
+            stage_label = "thinking" if behavior_mode == "chat" else f"{behavior_mode} plan"
+            stop_event = threading.Event()
+            label_state = {"label": stage_label}
+            _work_spinner(stage_label, stop_event, label_state)
+            def _progress_cb(msg: str) -> None:
+                label_state["label"] = f"{stage_label} · {msg}"
+            bot_json = _post_responses(payload, label="Main", progress_cb=_progress_cb) # Use llm_utils's post_responses
+            stop_event.set()
             bot_response = _extract_output_text(bot_json) or ""
             interaction_history.append("martin: " + bot_response)
             if verbose_logging:
@@ -2947,7 +3156,7 @@ def cmd_chat(cfg, args) -> int:
                 return reply
 
             bot_response = _auto_command_for_request(user_input, bot_response)
-            if review_mode and "command:" not in (bot_response or "").lower():
+            if review_mode:
                 bot_response = _format_review_response(bot_response)
 
             print(f"\033[92mmartin:\n{bot_response}\033[0m")
@@ -2999,6 +3208,44 @@ def cmd_chat(cfg, args) -> int:
                 return (key.strip(), payload.strip())
 
             terminal_commands = extract_commands(bot_response) if "command:" in bot_response.lower() else [] # Use researcher's extract_commands
+            intent_raw = step_details.get("user_intent_summary", "") or ""
+            intent_summary = intent_raw
+            changed = False
+            try:
+                intent_sanitized, changed = sanitize.sanitize_prompt(intent_raw)
+                intent_summary = chat_ui.shorten_output(intent_sanitized, max_len=200)
+            except Exception:
+                pass
+            questions_count = len(step_details.get("question_summaries") or [])
+            action_taken = "plan" if terminal_commands else "response"
+            outcome = "plan_proposed" if terminal_commands else "response_only"
+            followup_needed = questions_count > 0
+            try:
+                log_event(
+                    load_state(),
+                    "request_audit",
+                    intent_summary=intent_summary,
+                    behavior=behavior_mode,
+                    action_taken=action_taken,
+                    outcome=outcome,
+                    questions_count=questions_count,
+                    followup_needed=followup_needed,
+                    redacted=changed,
+                )
+            except Exception:
+                pass
+            try:
+                logger.info(
+                    "request_audit behavior=%s action=%s outcome=%s questions=%d followup=%s redacted=%s",
+                    behavior_mode,
+                    action_taken,
+                    outcome,
+                    questions_count,
+                    followup_needed,
+                    changed,
+                )
+            except Exception:
+                pass
             if terminal_commands:
                 rationale_text = user_input.strip() or "requested action"
                 print("\033[96mmartin: Rationale:\033[0m " + rationale_text)
@@ -3183,6 +3430,7 @@ def cmd_chat(cfg, args) -> int:
                         stored = _store_long_output(output, "cmd") if not _privacy_enabled() else ""
                         display = _format_output_for_display(output)
                         print(display)
+                        _print_output_summary(output)
                         if stored:
                             output_path = stored
                             print(f"[full output saved to {stored}]")
@@ -3232,7 +3480,6 @@ def cmd_chat(cfg, args) -> int:
                             if line.startswith("Mode") or line.startswith("----"):
                                 continue
                             if line[0] in ("d", "-"):
-                                import re
                                 cols = re.split(r"\s{2,}", line)
                                 if cols:
                                     names.append(cols[-1])
@@ -3264,6 +3511,7 @@ def cmd_chat(cfg, args) -> int:
                         stored = _store_long_output(output, "cmd_fail") if not _privacy_enabled() else ""
                         display = _format_output_for_display(output)
                         print(display)
+                        _print_output_summary(output)
                         if stored:
                             output_path = stored
                             print(f"[full output saved to {stored}]")
@@ -3609,6 +3857,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: List[str] = None) -> int:
     cfg = load_config()
+    try:
+        from researcher import llm_utils
+        ui_cfg = cfg.get("ui", {}) or {}
+        llm_utils.SHOW_API_BARS = bool(ui_cfg.get("api_progress", False))
+    except Exception:
+        pass
     parser = build_parser()
     if argv is None:
         argv = sys.argv[1:]

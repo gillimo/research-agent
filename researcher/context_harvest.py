@@ -87,10 +87,22 @@ def _open_prs(root: Path) -> Dict[str, Any]:
         return {"items": [], "note": "parse error"}
 
 
-def gather_context(root: Path, max_recent: int = 10) -> Dict[str, Any]:
+def gather_context(root: Path, max_recent: int = 10, fast: bool = False) -> Dict[str, Any]:
     root = root.resolve()
     git_status = _run(["git", "status", "-sb"], root)
     git_diff = _run(["git", "diff", "--stat"], root)
+    if fast:
+        return {
+            "root": str(root),
+            "git_status": git_status,
+            "git_diff_stat": git_diff,
+            "recent_files": [],
+            "tree": [],
+            "languages": {},
+            "tech_stack": [],
+            "open_prs": _open_prs(root),
+            "note": "fast_context",
+        }
     recent = []
     try:
         for p in sorted(root.rglob("*"), key=lambda x: x.stat().st_mtime, reverse=True):

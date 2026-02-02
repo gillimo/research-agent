@@ -1,0 +1,51 @@
+{
+  "env": {
+    "MARTIN_LOG_STDOUT": "1",
+    "MARTIN_STATE_PATH": "logs/uat_behavior_review_state.json"
+  },
+  "auto_wait": true,
+  "use_socket": true,
+  "socket_token": "uat-token",
+  "mailbox": true,
+  "mailbox_log": "logs/uat_behavior_review_mailbox.ndjson",
+  "mailbox_duration": 60,
+  "event_log": "logs/uat_behavior_review_events.ndjson",
+  "screenshot_dir": "logs/uat_behavior_review_snapshots",
+  "snapshot_lines": 60,
+  "steps": [
+    {
+      "input": "user",
+      "input_timeout": 10,
+      "input_when_prompt": "Handle for logbook"
+    },
+    {
+      "input": ".skip",
+      "input_timeout": 10,
+      "input_when_prompt": "Clock-in note"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Mark onboarding complete"
+    },
+    {
+      "wait_for_prompt": "You:",
+      "timeout": 40
+    },
+    {
+      "input": "/review on",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "please review this repo",
+      "input_timeout": 15,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Approve running"
+    }
+  ]
+}

@@ -29,7 +29,29 @@ Automation harness (optional)
 - Socket mode sends inputs over a test socket (`use_socket: true` in scenario)
 - Test socket can also be toggled via `MARTIN_TEST_SOCKET=1` (config: `test_socket`)
 - Mailbox mode is async: fire inputs, log outputs to `logs/uat_mailbox.ndjson`, and check later.
+- Mailbox session mode keeps the CLI open for extended testing (default duration 0 = keep alive): `python scripts/uat_harness.py --scenario scripts/uat_scenarios/mailbox.json --mailbox-session`.
+- Interactive socket console (manual UAT): start Martin with `MARTIN_TEST_SOCKET=1`, then run `python scripts/uat_socket_console.py` to type inputs and read output in real time.
 - Use mailbox scenario: `python scripts/uat_harness.py --scenario scripts/uat_scenarios/mailbox.json --echo`
+- Behavior smoke: `python scripts/uat_harness.py --scenario scripts/uat_scenarios/behavior_smoke.json --echo`
+- Behavior review: `python scripts/uat_harness.py --scenario scripts/uat_scenarios/behavior_review.json --echo`
+- Behavior goal: `python scripts/uat_harness.py --scenario scripts/uat_scenarios/behavior_goal.json --echo`
+- Behavior timeout: `python scripts/uat_harness.py --scenario scripts/uat_scenarios/behavior_timeout.json --echo`
+- Behavior complex (mailbox): `python scripts/uat_harness.py --scenario scripts/uat_scenarios/behavior_complex_mailbox.json`
+
+Mailbox loop (fast checks)
+- Run a mailbox scenario.
+- Inspect the mailbox NDJSON (`logs/uat_behavior_*_mailbox.ndjson`) for errors or missing prompts.
+- Inspect `logs/uat_behavior_complex_events.ndjson` for the `mailbox_collect` entry and confirm it contains the queue.
+- Transcript replay (mailbox): use `replay_path` steps to send a transcript line-by-line, prompt-gated.
+- Idle collect: set `mailbox_idle_s` to capture long-run output without manual collects.
+
+Mailbox regression checklist
+- Verify a `mailbox_collect` entry includes new output since last collect (cursor works).
+- Confirm queued inputs fire only on the intended prompt token.
+- Confirm late output appears in the final collect (grace window).
+- Confirm mailbox session metadata entries are present when `--mailbox-session` is used.
+- If issues appear, fix and re-run the same scenario before moving on.
+- After any fix, re-run the full behavior suite: smoke, review, goal, timeout.
 
 Test matrix (manual UAT)
 

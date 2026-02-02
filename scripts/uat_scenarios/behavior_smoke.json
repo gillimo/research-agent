@@ -1,0 +1,51 @@
+{
+  "env": {
+    "MARTIN_LOG_STDOUT": "1",
+    "MARTIN_STATE_PATH": "logs/uat_behavior_smoke_state.json"
+  },
+  "auto_wait": true,
+  "use_socket": true,
+  "socket_token": "uat-token",
+  "mailbox": true,
+  "mailbox_log": "logs/uat_behavior_smoke_mailbox.ndjson",
+  "mailbox_duration": 30,
+  "event_log": "logs/uat_behavior_smoke_events.ndjson",
+  "screenshot_dir": "logs/uat_behavior_smoke_snapshots",
+  "snapshot_lines": 40,
+  "steps": [
+    {
+      "input": "user",
+      "input_timeout": 10,
+      "input_when_prompt": "Handle for logbook"
+    },
+    {
+      "input": ".skip",
+      "input_timeout": 10,
+      "input_when_prompt": "Clock-in note"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Mark onboarding complete"
+    },
+    {
+      "wait_for_prompt": "You:",
+      "timeout": 30
+    },
+    {
+      "input": "/goal clear",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/agent on",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/status",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    }
+  ]
+}

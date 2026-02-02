@@ -14,7 +14,7 @@ from researcher.librarian_client import LIBRARIAN_HOST, LIBRARIAN_PORT
 from researcher.cloud_bridge import call_cloud, CloudCallResult
 from researcher.ingester import ingest_files
 from researcher.config_loader import load_config
-from researcher.index_utils import load_index_from_config
+from researcher.index_utils import load_index_from_config, save_index_from_config
 from researcher import sanitize
 
 LIBRARIAN_HEARTBEAT_INTERVAL_S = int(os.environ.get("LIBRARIAN_HEARTBEAT_INTERVAL_S", 10))
@@ -148,6 +148,13 @@ def _trust_score(ok: bool, output: str, sources: Optional[List[str]] = None) -> 
 def _is_stale(ts: str, days: int) -> bool:
     if not ts or days <= 0:
         return False
+
+
+def _scan_text_for_sensitive(text: str) -> Tuple[bool, str]:
+    sanitized, changed = sanitize.sanitize_prompt(text or "")
+    if changed:
+        return True, "redaction_detected"
+    return False, ""
     try:
         dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
         return (datetime.datetime.now(datetime.UTC) - dt).days >= days
@@ -190,8 +197,44 @@ class Librarian:
         if self.debug_mode:
             print(f"[Librarian {level.upper()}] {message} {json.dumps(data) if data else ''}")
 
+    def _filter_ingest_paths(self, paths: List[str], request_id: str = "") -> Tuple[List[Path], List[str]]:
+        exec_cfg = self.cfg.get("execution", {}) or {}
+        allowed_roots = exec_cfg.get("allowed_roots") or []
+        roots = [Path(r).resolve() for r in allowed_roots if r] or [ROOT_DIR.resolve()]
+        allowed: List[Path] = []
+        blocked: List[str] = []
+        for raw in paths:
+            try:
+                p = Path(raw)
+                if not p.is_absolute():
+                    p = (ROOT_DIR / p).resolve()
+                else:
+                    p = p.resolve()
+            except Exception:
+                blocked.append(raw)
+                continue
+            if not p.exists():
+                blocked.append(str(p))
+                continue
+            if not any(p == r or r in p.parents for r in roots):
+                blocked.append(str(p))
+                continue
+            if p.is_file():
+                allowed.append(p)
+        if blocked:
+            try:
+                log_event(self.state, "ingest_path_blocked", request_id=request_id, blocked_count=len(blocked), blocked_paths=blocked[:10])
+            except Exception:
+                pass
+        return allowed, blocked
+
     def _call_cloud_with_policy(self, prompt: str, cmd_template: Optional[str]) -> CloudCallResult:
         now = _now_ts()
+        if self.cfg.get("local_only"):
+            return CloudCallResult(False, "", "local_only", 1, "[blocked]", True, hashlib.sha256(b"local_only").hexdigest())
+        trust_policy = self.cfg.get("trust_policy", {}) or {}
+        if not trust_policy.get("allow_cloud", False):
+            return CloudCallResult(False, "", "trust_policy_block", 1, "[blocked]", True, hashlib.sha256(b"trust_policy").hexdigest())
         if self.cloud_breaker_until and now < self.cloud_breaker_until:
             return CloudCallResult(False, "", "circuit breaker open", 1, "[blocked]", True, hashlib.sha256(b"breaker").hexdigest())
         if self.cloud_backoff_until and now < self.cloud_backoff_until:
@@ -240,6 +283,13 @@ class Librarian:
     def _handle_ingest_text(self, text: str, topic: str, source: str) -> Dict[str, Any]:
         if not text:
             return {"status": "error", "message": "Missing text for ingest_text", "code": "invalid_payload"}
+        ingest_cfg = self.cfg.get("ingest", {}) or {}
+        if ingest_cfg.get("scan_proprietary"):
+            flagged, reason = _scan_text_for_sensitive(text)
+            if flagged:
+                log_event(self.state, "ingest_scan_flagged", hits=1, samples=[{"source": source, "reason": reason}])
+                if (ingest_cfg.get("scan_mode") or "warn").lower() == "block":
+                    return {"status": "error", "message": "ingest blocked by proprietary scan", "code": "scan_blocked"}
         notes_dir = (ROOT_DIR / "data" / "processed" / "librarian_notes")
         notes_dir.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
@@ -255,7 +305,10 @@ class Librarian:
         ]
         path.write_text("\n".join(header) + text + "\n", encoding="utf-8")
         idx = load_index_from_config(self.cfg)
-        ingest_result = ingest_files(idx, [path])
+        trust_policy = self.cfg.get("trust_policy", {}) or {}
+        trust_label = trust_policy.get("cloud_source", "public")
+        ingest_result = ingest_files(idx, [path], trust_label=trust_label, source_type="cloud")
+        save_index_from_config(self.cfg, idx)
         if hasattr(idx, "save"):
             idx.save()
         log_event(self.state, "librarian_ingest_text", topic=topic, source=source, hash=content_hash, path=str(path))
@@ -453,10 +506,36 @@ class Librarian:
         elif msg_type == "ingest_request":
             paths_str: List[str] = message.get("paths", [])
             idx = load_index_from_config(self.cfg)
-            files = [Path(p) for p in paths_str if Path(p).exists()]
-            ingest_result = ingest_files(idx, files)
-            if hasattr(idx, 'save'):
-                idx.save()
+            request_id = message.get("request_id", "") or ""
+            files, blocked = self._filter_ingest_paths(paths_str, request_id=request_id)
+            if not files:
+                response = {"status": "error", "message": "No allowed ingest paths", "code": "path_blocked"}
+                response["blocked"] = blocked[:10]
+                self._send_notification_to_researcher({"type": "notification", "event": "ingestion_blocked", "details": {"blocked": blocked[:10]}})
+                return response
+            ingest_cfg = self.cfg.get("ingest", {}) or {}
+            if ingest_cfg.get("scan_proprietary"):
+                scan_max = int(ingest_cfg.get("scan_max_bytes") or 200000)
+                scan_hits = []
+                for fp in files:
+                    try:
+                        data = fp.read_bytes()[:scan_max]
+                        text = data.decode("utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                    flagged, reason = _scan_text_for_sensitive(text)
+                    if flagged:
+                        scan_hits.append({"path": str(fp), "reason": reason})
+                if scan_hits:
+                    log_event(self.state, "ingest_scan_flagged", hits=len(scan_hits), samples=scan_hits[:5])
+                    if (ingest_cfg.get("scan_mode") or "warn").lower() == "block":
+                        response = {"status": "error", "message": "ingest blocked by proprietary scan", "code": "scan_blocked"}
+                        response["blocked"] = [h["path"] for h in scan_hits[:10]]
+                        return response
+            trust_policy = self.cfg.get("trust_policy", {}) or {}
+            trust_label = trust_policy.get("cloud_source", "public")
+            ingest_result = ingest_files(idx, files, trust_label=trust_label, source_type="cloud")
+            save_index_from_config(self.cfg, idx)
             response = {"status": "success", "result": ingest_result}
             self._send_notification_to_researcher({"type": "notification", "event": "ingestion_complete", "details": ingest_result})
 

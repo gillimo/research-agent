@@ -1,0 +1,62 @@
+{
+  "env": {
+    "MARTIN_LOG_STDOUT": "1",
+    "MARTIN_STATE_PATH": "logs/uat_behavior_goal_state.json"
+  },
+  "auto_wait": true,
+  "use_socket": true,
+  "socket_token": "uat-token",
+  "mailbox": true,
+  "mailbox_log": "logs/uat_behavior_goal_mailbox.ndjson",
+  "mailbox_duration": 60,
+  "event_log": "logs/uat_behavior_goal_events.ndjson",
+  "screenshot_dir": "logs/uat_behavior_goal_snapshots",
+  "snapshot_lines": 60,
+  "steps": [
+    {
+      "input": "user",
+      "input_timeout": 10,
+      "input_when_prompt": "Handle for logbook"
+    },
+    {
+      "input": ".skip",
+      "input_timeout": 10,
+      "input_when_prompt": "Clock-in note"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Mark onboarding complete"
+    },
+    {
+      "wait_for_prompt": "You:",
+      "timeout": 40
+    },
+    {
+      "input": "/goal set audit ux parity",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/goal status",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "do it",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "yes",
+      "input_timeout": 10,
+      "input_when_prompt": "Approve running"
+    },
+    {
+      "input": "/goal clear",
+      "input_timeout": 10,
+      "input_when_prompt": "You:",
+      "input_when_text": "Done. OK"
+    }
+  ]
+}

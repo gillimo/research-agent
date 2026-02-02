@@ -30,10 +30,17 @@ def decide_next_step(user_input: str) -> Dict[str, Any]:
     text = (user_input or "").strip().lower()
 
     # Simple heuristic for behavior
+    wants_plan = bool(re.search(r"\b(plan|schedule|track|tracker|checklist|chore|chores|todo|to-do|organize|organise|keep me honest|remind|reminder|queue|sequence)\b", text, re.IGNORECASE))
     wants_build = bool(re.search(r"\b(build|implement|code|fix|create|add|develop|make|generate|write|script|patch|resolve|solve|refactor|change|modify|update|edit|configure|set\s+up|setup|debug|troubleshoot|repair|adjust|alter|amend|produce|formulate|want|cd|directory|navigate)\b", text, re.IGNORECASE))
     wants_review = bool(re.search(r"\b(review|audit|critique|code review|analyze|check|inspect|examine|assess|evaluate|verify|look|understand|explain|investigate|explore|read|show|display|present|report|find|locate|search|comprehend|interpret|decipher|inform|clarify|detail|want)\b", text, re.IGNORECASE))
 
-    if wants_review:
+    if wants_plan:
+        behavior = "plan"
+        guidance = (
+            "Planning focus: turn the request into a short ordered checklist with time cues. "
+            "Confirm you will track progress and propose a check-in cadence."
+        )
+    elif wants_review:
         behavior = "review"
         guidance = (
             "Review focus: bugs, risks, regressions, and missing tests. "

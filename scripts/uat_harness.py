@@ -167,8 +167,12 @@ def main() -> int:
     parser.add_argument("--socket-token", help="Token to authenticate socket inputs.")
     parser.add_argument("--socket-timeout", type=float, default=5.0, help="Seconds to wait for socket connection.")
     parser.add_argument("--mailbox", action="store_true", help="Mailbox mode: fire inputs and log events asynchronously.")
+    parser.add_argument("--mailbox-session", action="store_true", help="Keep mailbox session open for extended async testing.")
     parser.add_argument("--mailbox-log", type=Path, help="Mailbox log path (NDJSON).")
     parser.add_argument("--mailbox-duration", type=float, default=6.0, help="Seconds to keep session alive in mailbox mode.")
+    parser.add_argument("--mailbox-grace", type=float, default=0.6, help="Seconds to keep collecting output after last input.")
+    parser.add_argument("--mailbox-collect-path", type=Path, help="Write mailbox collects to a text file.")
+    parser.add_argument("--mailbox-idle-collect", type=float, default=0.0, help="Seconds between idle mailbox collects (0 = off).")
     parser.add_argument("--event-log", type=Path, help="Event log path (NDJSON) for any run.")
     parser.add_argument("--screenshot-dir", type=Path, help="Capture output snapshots (TXT) after each step.")
     parser.add_argument("--snapshot-lines", type=int, default=40, help="Lines to keep per snapshot (tail).")
@@ -185,6 +189,11 @@ def main() -> int:
     mailbox_mode = bool(scenario.get("mailbox", False)) if isinstance(scenario, dict) else False
     if args.mailbox:
         mailbox_mode = True
+    mailbox_session = bool(scenario.get("mailbox_session", False)) if isinstance(scenario, dict) else False
+    if args.mailbox_session:
+        mailbox_session = True
+    if mailbox_session:
+        mailbox_mode = True
     socket_token = args.socket_token or (scenario.get("socket_token") if isinstance(scenario, dict) else None)
     mailbox_log = args.mailbox_log or (Path(scenario.get("mailbox_log")) if isinstance(scenario, dict) and scenario.get("mailbox_log") else None)
     if mailbox_mode and mailbox_log is None:
@@ -192,6 +201,19 @@ def main() -> int:
     mailbox_duration = float(args.mailbox_duration)
     if isinstance(scenario, dict) and "mailbox_duration" in scenario and "--mailbox-duration" not in sys.argv:
         mailbox_duration = float(scenario.get("mailbox_duration") or mailbox_duration)
+    if mailbox_session and "mailbox_duration" not in (scenario or {}) and "--mailbox-duration" not in sys.argv:
+        mailbox_duration = 0.0
+    mailbox_grace_s = float(args.mailbox_grace)
+    if isinstance(scenario, dict) and "mailbox_grace_s" in scenario and "--mailbox-grace" not in sys.argv:
+        mailbox_grace_s = float(scenario.get("mailbox_grace_s") or mailbox_grace_s)
+    mailbox_collect_path = args.mailbox_collect_path or (
+        Path(scenario.get("mailbox_collect_path")) if isinstance(scenario, dict) and scenario.get("mailbox_collect_path") else None
+    )
+    mailbox_idle_s = float(args.mailbox_idle_collect)
+    if isinstance(scenario, dict) and "mailbox_idle_s" in scenario and "--mailbox-idle-collect" not in sys.argv:
+        mailbox_idle_s = float(scenario.get("mailbox_idle_s") or mailbox_idle_s)
+    mailbox_start_on_prompt = bool(scenario.get("mailbox_start_on_prompt", False)) if isinstance(scenario, dict) else False
+    mailbox_start_prompt = scenario.get("mailbox_start_prompt") if isinstance(scenario, dict) else None
     event_log = args.event_log or (Path(scenario.get("event_log")) if isinstance(scenario, dict) and scenario.get("event_log") else None)
     screenshot_dir = args.screenshot_dir or (Path(scenario.get("screenshot_dir")) if isinstance(scenario, dict) and scenario.get("screenshot_dir") else None)
     snapshot_lines = int(args.snapshot_lines or (scenario.get("snapshot_lines") if isinstance(scenario, dict) else 40))
@@ -256,6 +278,10 @@ def main() -> int:
     event_buffer: List[Dict[str, Any]] = []
     event_lock = threading.Lock()
     socket_output_seen = threading.Event()
+    session_id = str(uuid.uuid4())
+    collect_index = 0
+    mailbox_collect_requested = False
+    mailbox_collect_expect: List[str] = []
     pending_inputs: List[Dict[str, Any]] = []
     consumed_text_counts: Dict[str, int] = {}
     consumed_event_counts: Dict[str, int] = {}
@@ -298,6 +324,8 @@ def main() -> int:
 
     reader = threading.Thread(target=_reader, daemon=True)
     reader.start()
+
+    mailbox_start = {"ts": None}
 
     def _socket_reader(sock: socket.socket) -> None:
         buffer = ""
@@ -349,6 +377,12 @@ def main() -> int:
                         output_buffer.append("PROMPT_READY")
                     prompt_event.set()
                     saw_prompt["value"] = True
+                    if mailbox_mode and mailbox_start_on_prompt and mailbox_start["ts"] is None:
+                        if mailbox_start_prompt:
+                            if isinstance(text, str) and mailbox_start_prompt in text:
+                                mailbox_start["ts"] = time.time()
+                        else:
+                            mailbox_start["ts"] = time.time()
                     if mailbox_mode:
                         _flush_pending()
                 if msg_type == "input_used":
@@ -376,6 +410,40 @@ def main() -> int:
             return
         proc.stdin.write(text + "\n")
         proc.stdin.flush()
+
+    def _collect_output() -> str:
+        nonlocal collect_index
+        with output_lock:
+            if collect_index >= len(output_buffer):
+                return ""
+            chunk = "".join(output_buffer[collect_index:])
+            collect_index = len(output_buffer)
+            return chunk
+
+    def _write_collect(text: str, final: bool = False) -> None:
+        if not mailbox_collect_path or not text:
+            return
+        try:
+            mailbox_collect_path.parent.mkdir(parents=True, exist_ok=True)
+            header = f"\n--- mailbox_collect ts={time.time():.3f} session={session_id} final={final} ---\n"
+            with mailbox_collect_path.open("a", encoding="utf-8") as handle:
+                handle.write(header)
+                handle.write(text)
+                if not text.endswith("\n"):
+                    handle.write("\n")
+        except Exception:
+            pass
+
+    if mailbox_session:
+        _append_log(
+            event_log,
+            {
+                "ts": time.time(),
+                "type": "mailbox_session_start",
+                "session_id": session_id,
+                "pid": proc.pid,
+            },
+        )
 
     def _count_text_matches(token: str) -> int:
         if not token:
@@ -560,6 +628,34 @@ def main() -> int:
         input_when_text = step.get("input_when_text")
         input_when_event = step.get("input_when_event")
         input_when_prompt = step.get("input_when_prompt")
+        queue_input = bool(step.get("queue_input", False))
+        collect = bool(step.get("collect", False))
+        replay_path = step.get("replay_path")
+        replay_prefix = step.get("replay_prefix", "")
+        expect = step.get("expect") if isinstance(step.get("expect"), list) else []
+        if isinstance(step.get("expect"), str):
+            expect = [step.get("expect")]
+        if replay_path:
+            try:
+                content = Path(replay_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+            except Exception:
+                content = []
+            for line in content:
+                line = line.strip()
+                if not line:
+                    continue
+                pending_inputs.append(
+                    {
+                        "input": f"{replay_prefix}{line}",
+                        "input_when_text": None,
+                        "input_when_event": None,
+                        "input_when_prompt": "You:",
+                        "baseline_text": _baseline_counts([], _count_text_matches),
+                        "baseline_event": _baseline_counts([], _count_event_matches),
+                        "baseline_prompt": _baseline_counts(["You:"], _count_prompt_matches),
+                    }
+                )
+            continue
         if isinstance(text, str):
             should_send = True
             if mailbox_mode and (input_when_text or input_when_event):
@@ -579,6 +675,10 @@ def main() -> int:
                     baseline_prompt = _baseline_counts(tokens, _count_prompt_matches)
                     if not _conditions_met_prompt(input_when_prompt, baseline_prompt):
                         should_send = False
+            if queue_input and mailbox_mode:
+                if not input_when_prompt:
+                    input_when_prompt = "You:"
+                should_send = False
             if input_when_text:
                 tokens = [input_when_text] if isinstance(input_when_text, str) else list(input_when_text or [])
                 if not mailbox_mode:
@@ -668,8 +768,6 @@ def main() -> int:
                         print("[warn] Input not consumed before timeout.", file=sys.stderr)
                         break
         if isinstance(wait_for, str):
-            if mailbox_mode:
-                continue
             timeout = float(step.get("timeout", args.timeout))
             found, cursor = _wait_for_text(
                 output_buffer,
@@ -682,8 +780,6 @@ def main() -> int:
             if not found:
                 print(f"[warn] Expected text not found: {wait_for!r}", file=sys.stderr)
         if wait_for_event:
-            if mailbox_mode:
-                continue
             if isinstance(wait_for_event, str):
                 event_types = [wait_for_event]
             elif isinstance(wait_for_event, list):
@@ -703,8 +799,6 @@ def main() -> int:
                 if not found:
                     print(f"[warn] Expected event not found: {event_types!r}", file=sys.stderr)
         if wait_for_prompt:
-            if mailbox_mode:
-                continue
             tokens = [wait_for_prompt] if isinstance(wait_for_prompt, str) else list(wait_for_prompt or [])
             if tokens:
                 timeout = float(step.get("timeout", args.timeout))
@@ -718,6 +812,29 @@ def main() -> int:
                 )
                 if not found:
                     print(f"[warn] Expected prompt not found: {tokens!r}", file=sys.stderr)
+        if collect and mailbox_mode:
+            mailbox_collect_requested = True
+            mailbox_collect_expect.extend([token for token in expect if token])
+            continue
+        if collect:
+            collected = _collect_output()
+            if collected:
+                _append_log(
+                    event_log,
+                    {
+                        "ts": time.time(),
+                        "type": "mailbox_collect",
+                        "session_id": session_id,
+                        "chars": len(collected),
+                        "lines": len(collected.splitlines()),
+                        "text": collected,
+                    },
+                )
+                _write_collect(collected)
+            if expect:
+                missing = [token for token in expect if token and token not in (collected or "")]
+                if missing:
+                    print(f"[warn] Expected tokens missing in mailbox collect: {missing!r}", file=sys.stderr)
         if mailbox_mode:
             continue
         sleep_for = step.get("sleep", args.delay)
@@ -736,10 +853,62 @@ def main() -> int:
                 pass
 
     if mailbox_mode:
-        deadline = time.time() + mailbox_duration
-        while time.time() < deadline:
+        if not mailbox_start_on_prompt:
+            mailbox_start["ts"] = time.time()
+        last_idle_collect = time.time()
+        while True:
+            if proc.poll() is not None:
+                break
+            if mailbox_start["ts"] is None:
+                _flush_pending()
+                time.sleep(0.1)
+                continue
+            if mailbox_duration > 0:
+                deadline = mailbox_start["ts"] + mailbox_duration
+                if time.time() >= deadline:
+                    break
+            if mailbox_idle_s > 0 and (time.time() - last_idle_collect) >= mailbox_idle_s:
+                idle_collected = _collect_output()
+                if idle_collected:
+                    _append_log(
+                        event_log,
+                        {
+                            "ts": time.time(),
+                            "type": "mailbox_collect_idle",
+                            "session_id": session_id,
+                            "chars": len(idle_collected),
+                            "lines": len(idle_collected.splitlines()),
+                            "text": idle_collected,
+                        },
+                    )
+                    _write_collect(idle_collected)
+                last_idle_collect = time.time()
             _flush_pending()
             time.sleep(0.1)
+        if mailbox_duration > 0 and mailbox_grace_s > 0:
+            grace_deadline = time.time() + mailbox_grace_s
+            while time.time() < grace_deadline:
+                _flush_pending()
+                time.sleep(0.1)
+        final_collected = _collect_output()
+        if final_collected:
+            _append_log(
+                event_log,
+                {
+                    "ts": time.time(),
+                    "type": "mailbox_collect",
+                    "session_id": session_id,
+                    "chars": len(final_collected),
+                    "lines": len(final_collected.splitlines()),
+                    "text": final_collected,
+                    "final": True,
+                },
+            )
+            _write_collect(final_collected, final=True)
+            if mailbox_collect_requested and mailbox_collect_expect:
+                missing = [token for token in mailbox_collect_expect if token and token not in (final_collected or "")]
+                if missing:
+                    print(f"[warn] Expected tokens missing in mailbox collect: {missing!r}", file=sys.stderr)
         if pending_inputs:
             _append_log(
                 event_log,
@@ -757,16 +926,56 @@ def main() -> int:
                     ],
                 },
             )
-        _send("quit")
-        time.sleep(0.25)
+        if mailbox_session:
+            _append_log(
+                event_log,
+                {
+                    "ts": time.time(),
+                    "type": "mailbox_session_end",
+                    "session_id": session_id,
+                    "pid": proc.pid,
+                    "last_prompt": _strip_ansi(_latest_prompt_text()),
+                },
+            )
+        if not mailbox_session:
+            latest_prompt = _strip_ansi(_latest_prompt_text())
+            if latest_prompt:
+                exit_prompts = [
+                    ("Approve running", "no"),
+                    ("Apply suggested fix commands now", "no"),
+                    ("Command touches outside workspace", "no"),
+                    ("Mark onboarding complete", "no"),
+                    ("Clock-in note", ".skip"),
+                    ("Handle for logbook", "user"),
+                ]
+                for token, response in exit_prompts:
+                    if token in latest_prompt:
+                        if pending_inputs:
+                            if not any((item.get("input_when_prompt") or "").find(token) >= 0 for item in pending_inputs):
+                                continue
+                        _send(response)
+                        _append_log(
+                            event_log,
+                            {
+                                "ts": time.time(),
+                                "type": "mailbox_exit_prompt",
+                                "prompt": latest_prompt,
+                                "response": response,
+                            },
+                        )
+                        time.sleep(0.1)
+                        break
+            _send("quit")
+            time.sleep(0.25)
     if not args.keep_open and not mailbox_mode:
         _send("quit")
         time.sleep(0.25)
 
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.terminate()
+    if not mailbox_session:
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
     if socket_conn:
         try:
             socket_conn.close()

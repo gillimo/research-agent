@@ -1,11 +1,14 @@
 import json
 import hashlib
 import datetime
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
 from researcher import sanitize
 from researcher.state_manager import ROOT_DIR, load_state, save_state
+from researcher.config_loader import load_config
+from researcher.crypto_utils import encrypt_text, should_encrypt_logs
 
 TOOL_LEDGER_FILE = ROOT_DIR / "logs" / "tool_ledger.ndjson"
 
@@ -89,6 +92,27 @@ def append_tool_entry(
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     new_hash = _sha256_bytes(((prev_hash or "") + raw).encode("utf-8"))
     line = json.dumps({"entry": payload, "prev_hash": prev_hash, "hash": new_hash}, ensure_ascii=False)
+    try:
+        cfg = load_config()
+        if should_encrypt_logs(cfg, state):
+            key_env = (cfg.get("trust_policy", {}) or {}).get("encryption_key_env", "MARTIN_ENCRYPTION_KEY")
+            key = os.environ.get(key_env or "")
+            if not key:
+                return
+            secure_dir = ROOT_DIR / "logs" / "secure"
+            secure_dir.mkdir(parents=True, exist_ok=True)
+            secure_path = secure_dir / "tool_ledger.enc"
+            enc_line = encrypt_text(line, key)
+            with secure_path.open("a", encoding="utf-8") as f:
+                f.write(enc_line + "\n")
+            state.setdefault("tool_ledger", {"entries": 0, "last_hash": None})
+            state["tool_ledger"]["entries"] = int(state["tool_ledger"].get("entries", 0)) + 1
+            state["tool_ledger"]["last_hash"] = new_hash
+            if st is None:
+                save_state(state)
+            return
+    except Exception:
+        pass
     with path.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
 

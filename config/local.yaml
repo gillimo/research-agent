@@ -20,10 +20,10 @@ data_paths:
 
 # Cloud bridge (no secrets here; use env vars)
 cloud:
-  enabled: false
-  provider: ""          # e.g., "openai", "gemini"
-  model: ""             # e.g., "gpt-4o"
-  cmd_template: ""      # e.g., 'codex --model gpt-4o --prompt "{prompt}"'
+  enabled: false         # leave off by default; flip on when you have quota/keys
+  provider: "openai"     # e.g., "openai", "gemini"
+  model: "gpt-5-mini"    # e.g., "gpt-4o"
+  cmd_template: ""       # e.g., 'codex --model gpt-4o --prompt "{prompt}"'
   trigger_score: 0.3
   trigger_on_disagreement: true
   trigger_on_low_confidence: true
@@ -58,12 +58,26 @@ auto_update:
 rephraser:
   enabled: false
 
+# Behavior
+behavior:
+  summaries: true
+  followup_resolver: true
+  clarification_policy: true
+  context_block: true
+
+# Logging
+logging:
+  verbose: true
+
 # Execution controls
 execution:
   approval_policy: on-request   # on-request|on-failure|never
   sandbox_mode: workspace-write # read-only|workspace-write|full
   command_allowlist: []
   command_denylist: []
+  hard_block_outside: false
+  allowed_roots: []
+  remote_policy: block # block|relay
 
 # Local-only mode (blocks all cloud calls)
 local_only: true
@@ -73,7 +87,51 @@ context:
   auto: false
   max_recent: 10
 
+# UI
+ui:
+  footer: true
+  api_progress: false
+  startup_compact: true
+
+# Local LLM
+local_llm:
+  enabled: true
+  streaming: false
+  fallbacks: []
+
+# Ingest policy
+ingest:
+  allowlist_roots: []
+  allowlist_exts: []
+  allowlist_mode: warn
+  scan_proprietary: true
+  scan_mode: warn
+  scan_max_bytes: 200000
+
+# Trust policy
+trust_policy:
+  allow_cloud: true
+  allow_librarian_notes: true
+  allow_sources: ["internal", "public"]
+  default_source: "internal"
+  cloud_source: "public"
+  encrypt_exports: false
+  encrypt_when_remote: true
+  encrypt_logs: false
+  encrypt_logs_when_remote: true
+  encryption_key_env: "MARTIN_ENCRYPTION_KEY"
+
+# Remote transport
+remote_transport:
+  type: "ssh"
+  ssh_user: ""
+  ssh_host: ""
+  local_port: 6001
+  remote_port: 6001
+  identity_file: ""
+
 # Direct socket server for bi-directional communication
 socket_server:
   host: "127.0.0.1"
   port: 6001
+  verbose: false

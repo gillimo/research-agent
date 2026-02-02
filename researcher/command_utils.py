@@ -3,6 +3,7 @@ import re
 import shlex
 import tempfile
 import subprocess
+import hashlib
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List
 
@@ -41,6 +42,8 @@ def extract_commands(text: str) -> list[str]:
     commands = []
     cwd: Optional[str] = None
     for line in text.splitlines():
+        if "```" in line and "command:" in line:
+            line = line.replace("```", "")
         m = CMD_LINE_RE.match(line)
         if not m:
             continue
@@ -260,13 +263,22 @@ def edit_commands_in_editor(commands: List[str]) -> List[str]:
         editor = "notepad"
     if not editor:
         editor = "vi"
+    content = "\n".join(commands) + "\n"
+    pre_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".cmds", encoding="utf-8") as f:
         path = f.name
-        f.write("\n".join(commands) + "\n")
+        f.write(content)
     try:
         subprocess.run([editor, path], check=False)
         with open(path, "r", encoding="utf-8") as f:
-            lines = [ln.strip() for ln in f.readlines()]
+            edited_content = f.read()
+        post_hash = hashlib.sha256(edited_content.encode("utf-8")).hexdigest()
+        try:
+            from researcher.state_manager import log_event, load_state
+            log_event(load_state(), "editor_commands", path=path, pre_hash=pre_hash, post_hash=post_hash, changed=pre_hash != post_hash)
+        except Exception:
+            pass
+        lines = [ln.strip() for ln in edited_content.splitlines()]
         updated = [ln for ln in lines if ln]
         return updated or commands
     finally:

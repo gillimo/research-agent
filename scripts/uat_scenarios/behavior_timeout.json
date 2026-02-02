@@ -1,0 +1,53 @@
+{
+  "env": {
+    "MARTIN_LOG_STDOUT": "1",
+    "MARTIN_STATE_PATH": "logs/uat_behavior_timeout_state.json"
+  },
+  "auto_wait": true,
+  "use_socket": true,
+  "socket_token": "uat-token",
+  "mailbox": true,
+  "mailbox_start_on_prompt": true,
+  "mailbox_start_prompt": "You:",
+  "mailbox_log": "logs/uat_behavior_timeout_mailbox.ndjson",
+  "mailbox_duration": 20,
+  "event_log": "logs/uat_behavior_timeout_events.ndjson",
+  "screenshot_dir": "logs/uat_behavior_timeout_snapshots",
+  "snapshot_lines": 60,
+  "steps": [
+    {
+      "input": "user",
+      "input_timeout": 10,
+      "input_when_prompt": "Handle for logbook"
+    },
+    {
+      "input": ".skip",
+      "input_timeout": 10,
+      "input_when_prompt": "Clock-in note"
+    },
+    {
+      "input": "no",
+      "input_timeout": 10,
+      "input_when_prompt": "Mark onboarding complete"
+    },
+    {
+      "wait_for_prompt": "You:",
+      "timeout": 30
+    },
+    {
+      "input": "/agent on",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/rerun command",
+      "input_timeout": 10,
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "yes",
+      "input_timeout": 10,
+      "input_when_prompt": "Approve running"
+    }
+  ]
+}

@@ -251,7 +251,8 @@ def run_tui() -> None:
     _prompt_clock(console, "Clock-in")
     st = load_state()
     root = Path.cwd()
-    context = gather_context(root, max_recent=10)
+    fast_ctx = not (root / ".git").exists()
+    context = gather_context(root, max_recent=10, fast=fast_ctx)
     palette_entries = chat_ui.build_palette_entries("", chat_ui.get_slash_commands(), [])
     palette_items = [{"kind": kind, "value": value} for kind, value in palette_entries]
     tasks = _load_tasks(st)
@@ -291,9 +292,11 @@ def run_tui() -> None:
             elif key in ("m",):
                 view = "process"
             elif key in ("c",):
-                context = gather_context(root, max_recent=10)
+                fast_ctx = not (root / ".git").exists()
+                context = gather_context(root, max_recent=10, fast=fast_ctx)
             elif key in ("r",):
-                context = gather_context(root, max_recent=10)
+                fast_ctx = not (root / ".git").exists()
+                context = gather_context(root, max_recent=10, fast=fast_ctx)
             elif key in ("TAB",):
                 focus = "right" if focus == "left" else "left"
             elif key in ("j", "DOWN"):

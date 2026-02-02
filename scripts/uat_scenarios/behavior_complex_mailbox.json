@@ -1,0 +1,48 @@
+{
+  "use_socket": true,
+  "mailbox": true,
+  "mailbox_duration": 60,
+  "mailbox_grace_s": 5.0,
+  "mailbox_start_on_prompt": true,
+  "event_log": "logs/uat_behavior_complex_events.ndjson",
+  "mailbox_log": "logs/uat_behavior_complex_mailbox.ndjson",
+  "steps": [
+    {
+      "wait_for_event": "loop_ready",
+      "timeout": 30
+    },
+    {
+      "input": "piccilo",
+      "queue_input": true,
+      "input_when_prompt": "Handle for logbook"
+    },
+    {
+      "input": "no",
+      "queue_input": true,
+      "input_when_prompt": "Mark onboarding complete"
+    },
+    {
+      "input": "keep me honest. by 8pm i need to do 2 loads of laundry, move all the clothes, clean the bathroom, cook and clean dinner, and change the cat box. track me and set check-ins.",
+      "input_when_prompt": "You:"
+    },
+    {
+      "input": "/queue",
+      "input_when_prompt": "You:"
+    },
+    {
+      "wait_for": "Action queue",
+      "timeout": 40
+    },
+    {
+      "wait_for": "Summary:",
+      "timeout": 40
+    },
+    {
+      "collect": true,
+      "expect": [
+        "Action queue",
+        "Summary:"
+      ]
+    }
+  ]
+}

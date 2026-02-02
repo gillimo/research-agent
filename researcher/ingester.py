@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Iterable, List, Dict, Any
+from typing import Iterable, List, Dict, Any, Optional
 
 from researcher.index import SimpleIndex, FaissIndex
 
@@ -19,9 +19,10 @@ def simple_chunk(text: str, max_chars: int = 800, overlap: int = 80) -> List[str
     return [c for c in chunks if c]
 
 
-def ingest_files(idx, files: Iterable[Path]) -> Dict[str, Any]:
+def ingest_files(idx, files: Iterable[Path], trust_label: Optional[str] = None, source_type: str = "") -> Dict[str, Any]:
     ingested = 0
     errors: List[str] = []
+    trust = trust_label or "internal"
     for fp in files:
         try:
             text = fp.read_text(encoding="utf-8", errors="ignore")
@@ -30,9 +31,9 @@ def ingest_files(idx, files: Iterable[Path]) -> Dict[str, Any]:
             continue
         chunks = simple_chunk(text)
         if isinstance(idx, FaissIndex):
-            idx.add(chunks, [{"path": str(fp), "chunk": c[:200]} for c in chunks])
+            idx.add(chunks, [{"path": str(fp), "chunk": c[:200], "trust": trust, "source_type": source_type} for c in chunks])
         else:
             for chunk in chunks:
-                idx.add(chunk, {"path": str(fp), "chunk": chunk[:200]})
+                idx.add(chunk, {"path": str(fp), "chunk": chunk[:200], "trust": trust, "source_type": source_type})
         ingested += 1
     return {"ingested": ingested, "errors": errors}

@@ -2,6 +2,212 @@ Logbook
 =======
 
 Entries (newest first)
+- 2026-01-31 | handle: gillimo | Clock-in: auto: clock-in
+- 2026-01-31 | handle: codex | Notes: Enabled local-only + Ollama fallback for Martin to avoid OpenAI quota stalls; verified `martin status` OK; cloud disabled by default; added bug-log note. Next: wire same shim into Moltbot via molthub once target path is known.
+- 2026-01-31 | handle: gillimo | Clock-in: auto: clock-in
+- 2026-01-31 | handle: gillimo | Clock-out: auto: clock-out
+- 2026-01-31 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-31 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-31 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: piccilo | Clock-in: plan of attack to train Martin to Codex-level behavior
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: Codex | Clock-in: added live thinking status line
+- 2025-12-30 | handle: Codex | Clock-in: fast startup context mode for non-repo paths
+- 2025-12-30 | handle: Codex | Clock-in: added startup progress bar messaging
+- 2025-12-30 | handle: Codex | Clock-in: clarified startup messaging quickstart/logs
+- 2025-12-30 | handle: Codex | Clock-in: added request_audit check to UX audit
+- 2025-12-30 | handle: Codex | Clock-in: tightened UAT re-run guidance
+- 2025-12-30 | handle: Codex | Clock-in: added behavior parity notes to UX audit
+- 2025-12-30 | handle: Codex | Clock-in: updated verification doc with ticket update step
+- 2025-12-30 | handle: Codex | Clock-in: full behavior suite + pytest pass
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: Codex | Clock-in: added behavior timeout to UAT plan
+- 2025-12-30 | handle: Codex | Clock-in: linked clean-machine run log in tickets
+- 2025-12-30 | handle: Codex | Clock-in: added clean-machine run log template
+- 2025-12-30 | handle: Codex | Clock-in: UX test audit results documented
+- 2025-12-30 | handle: Codex | Clock-in: verification review; clean-machine steps pending
+- 2025-12-30 | handle: Codex | Clock-in: mailbox timeout UAT + harness prompt start gating
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: Codex | Clock-in: behavior UAT scenarios + request audit logging
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: Codex | Clock-in: socket behavior run + follow-up resolver fix
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-out: auto: clock-out
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: user | Clock-in: auto: clock-in
+- 2025-12-30 | handle: quit | Clock-in: auto: clock-in
+- 2025-12-30 | handle: quit | Clock-in: auto: clock-in
+- 2025-12-30 | handle: quit | Clock-in: auto: clock-in
+- 2025-12-30 | handle: quit | Clock-in: auto: clock-in
+- 2025-12-30 | handle: quit | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-out: auto: clock-out
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: auto: clock-in
+- 2025-12-30 | handle: gillimo | Clock-in: /agent on
+- 2025-12-30 | handle: gillimo | Clock-in: /agent on
+- 2025-12-30 | handle: gillimo | Clock-in: /agent on
+- 2025-12-30 | handle: gillimo | Clock-in: /agent on
+- 2025-12-30 | handle: gillimo | Clock-in: clock in
 - 2025-12-29 | handle: codex-steelheron-9f | Clock-in: CX34/CX35/CX36/CX38/CX40 + /open + inline editor | Clock-out: tests green, TUI and diff UX updated.
 - 2025-12-29 | handle: codex-steelheron-9f | Clock-in: TUI shell + file picker + editor UI | Clock-out: tests green, CX34/CX35/CX36/CX37 progressed.
 - 2025-12-29 | handle: codex-steelheron-9f | Clock-in: workspace banner + CX45 | Clock-out: tests green, CX45 closed.

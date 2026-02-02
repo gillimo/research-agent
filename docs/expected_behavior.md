@@ -3,7 +3,10 @@
 This document defines how Martin is expected to behave during normal operation. It is the behavioral contract used for QA, UAT, and parity checks.
 
 Core interaction flow
-- Startup prints context summary and status banner; warns if local-only is on with cloud creds present.
+- Startup prints context summary, status banner, and a quickstart line; warns if local-only is on with cloud creds present.
+- Startup shows a progress bar for preflight, clock-in, context, and onboarding to signal activity.
+- If running outside a repo, startup uses a fast context scan to avoid long waits.
+- Long LLM responses show a live "Working: thinking · request n/3" status line until output is ready.
 - Clock-in/out entries are recorded automatically without prompting for a user note.
 - Minimal questions: Martin proceeds unless blocked by policy or ambiguity; assumptions are stated explicitly.
 - Follow-ups like "do it", "continue", "yes" resolve to the active goal when set.

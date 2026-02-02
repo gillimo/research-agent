@@ -7,9 +7,9 @@ from researcher.resource_registry import list_resources
 
 def get_slash_commands() -> List[str]:
     return [
-        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/privacy", "/keys", "/retry", "/onboarding", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks", "/tests", "/rerun",
+        "/help", "/clear", "/status", "/memory", "/history", "/palette", "/files", "/open", "/worklog", "/clock", "/privacy", "/keys", "/retry", "/onboarding", "/context", "/plan", "/outputs", "/resume", "/librarian", "/tasks", "/queue", "/tests", "/rerun",
         "/abilities", "/resources", "/resource", "/rag",
-        "/agent", "/cloud", "/ask", "/ingest", "/compress", "/signoff", "/exit", "/catalog", "/review",
+        "/agent", "/cloud", "/ask", "/ingest", "/compress", "/signoff", "/exit", "/catalog", "/review", "/host", "/remote", "/redaction", "/import", "/goal", "/verify", "/trust", "/encrypt", "/decrypt", "/rotate",
     ]
 
 
@@ -35,6 +35,7 @@ def get_command_descriptions() -> Dict[str, str]:
         "/resume": "show resume snapshot",
         "/librarian": "inbox/request/sources",
         "/tasks": "task queue",
+        "/queue": "action queue (planner)",
         "/abilities": "list internal abilities",
         "/resources": "list readable resources",
         "/resource": "read a resource",
@@ -50,6 +51,16 @@ def get_command_descriptions() -> Dict[str, str]:
         "/exit": "exit chat",
         "/catalog": "librarian catalog",
         "/review": "review mode toggle",
+        "/host": "device registry",
+        "/remote": "remote tunnel",
+        "/redaction": "redaction report",
+        "/import": "import session",
+        "/goal": "active goal",
+        "/verify": "verification checklist",
+        "/trust": "trust policy tools",
+        "/encrypt": "encrypt a file",
+        "/decrypt": "decrypt a file",
+        "/rotate": "rotate encryption key for file",
     }
 
 
@@ -338,6 +349,8 @@ def render_status_banner(
     mode: str = "",
     model_info: str = "",
     warnings: str = "",
+    active_context: Optional[Dict[str, object]] = None,
+    current_host: str = "",
 ) -> None:
     git_line = ""
     try:
@@ -352,7 +365,18 @@ def render_status_banner(
     mode_txt = f" | mode: {mode}" if mode else ""
     model_txt = f" | model: {model_info}" if model_info else ""
     warn_txt = f" | warn: {warnings}" if warnings else ""
-    line = f"{git_line}{mode_txt}{model_txt}{warn_txt}{suffix}".strip()
+    host_txt = f" | host: {current_host}" if current_host else ""
+    line = f"{git_line}{mode_txt}{model_txt}{warn_txt}{host_txt}{suffix}".strip()
+    if active_context:
+        goal = (active_context or {}).get("goal") or ""
+        next_action = (active_context or {}).get("next_action") or ""
+        context_line = ""
+        if goal:
+            context_line = f"goal: {goal}"
+        if next_action:
+            context_line = f"{context_line} | next: {next_action}".strip(" |")
+        if context_line:
+            line = f"{line}\n{context_line}"
     if not line:
         return
     try:

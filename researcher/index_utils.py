@@ -30,6 +30,22 @@ def load_index_from_config(cfg: Dict[str, Any]):
             return SimpleIndex.load(mock_path)
     return SimpleIndex.load(mock_path)
 
+
+def save_index_from_config(cfg: Dict[str, Any], idx) -> None:
+    vs = cfg.get("vector_store", {}) or {}
+    mock_path = Path(vs.get("mock_index_path", "data/index/mock_index.pkl"))
+    try:
+        if isinstance(idx, SimpleIndex):
+            idx.save(mock_path)
+            return
+        if isinstance(idx, FaissIndex):
+            idx.save()
+            return
+        if hasattr(idx, "save"):
+            idx.save()
+    except Exception:
+        pass
+
 if __name__ == "__main__":
     # Example usage for testing
     print("--- Testing index_utils ---")

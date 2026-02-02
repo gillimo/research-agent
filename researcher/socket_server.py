@@ -2,6 +2,7 @@ import os
 import socket
 import threading
 import json
+import logging
 from typing import Dict, Any, Callable, Optional
 
 PROTOCOL_VERSION = "1"
@@ -27,20 +28,37 @@ class SocketServer:
         handler: Optional[Callable[[Dict[str, Any]], None]] = None,
         auth_token: Optional[str] = None,
         allowlist: Optional[list[str]] = None,
+        verbose: bool = False,
     ):
         self.host = host
         self.port = port
         self.handler = handler
         self.auth_token = auth_token if auth_token is not None else os.getenv(AUTH_TOKEN_ENV, "")
         self.allowlist = allowlist if allowlist is not None else _parse_allowlist(os.getenv(ALLOWLIST_ENV, ""))
+        self.verbose = bool(verbose)
+        self.logger = logging.getLogger("researcher.socket_server")
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_thread = None
         self._is_running = False
 
+    def _log(self, msg: str, level: str = "info") -> None:
+        if self.verbose:
+            print(msg)
+            return
+        try:
+            if level == "error":
+                self.logger.error(msg)
+            elif level == "warning":
+                self.logger.warning(msg)
+            else:
+                self.logger.info(msg)
+        except Exception:
+            pass
+
     def _handle_client(self, conn, addr):
         """Handle incoming client connection."""
-        print(f"[SocketServer] Accepted connection from {addr}")
+        self._log(f"[SocketServer] Accepted connection from {addr}")
         try:
             while self._is_running:
                 len_bytes = conn.recv(4)
@@ -68,7 +86,7 @@ class SocketServer:
 
                 try:
                     message: Dict[str, Any] = json.loads(msg_bytes.decode("utf-8"))
-                    print(f"[SocketServer] Received message: {message}")
+                    self._log(f"[SocketServer] Received message: {message}")
                     if self.allowlist and addr[0] not in self.allowlist:
                         response = {"status": "error", "message": "Unauthorized host", "protocol_version": PROTOCOL_VERSION, "request_id": message.get("request_id")}
                         resp_json = json.dumps(response).encode("utf-8")
@@ -91,10 +109,10 @@ class SocketServer:
                         self.handler(message)
                     response = {"status": "ok", "message": "Message received", "protocol_version": PROTOCOL_VERSION}
                 except json.JSONDecodeError:
-                    print(f"[SocketServer] Received non-JSON data: {msg_bytes.decode('utf-8')}")
+                    self._log(f"[SocketServer] Received non-JSON data: {msg_bytes.decode('utf-8')}", level="warning")
                     response = {"status": "error", "message": "Invalid JSON format", "protocol_version": PROTOCOL_VERSION}
                 except Exception as e:
-                    print(f"[SocketServer] Error handling message: {e}")
+                    self._log(f"[SocketServer] Error handling message: {e}", level="error")
                     response = {"status": "error", "message": f"Handler error: {e}", "protocol_version": PROTOCOL_VERSION}
 
                 resp_json = json.dumps(response).encode("utf-8")
@@ -102,14 +120,14 @@ class SocketServer:
                 conn.sendall(resp_len + resp_json)
 
         finally:
-            print(f"[SocketServer] Closing connection from {addr}")
+            self._log(f"[SocketServer] Closing connection from {addr}")
             conn.close()
 
     def _run(self):
         """The main server loop."""
         self.sock.bind((self.host, self.port))
         self.sock.listen(1)
-        print(f"[SocketServer] Listening on {self.host}:{self.port}")
+        self._log(f"[SocketServer] Listening on {self.host}:{self.port}")
         self._is_running = True
 
         while self._is_running:
@@ -121,10 +139,10 @@ class SocketServer:
             except socket.error as e:
                 # This can happen when the socket is closed while accept() is blocking
                 if self._is_running:
-                    print(f"[SocketServer] Socket error: {e}")
+                    self._log(f"[SocketServer] Socket error: {e}", level="warning")
                 break
         
-        print("[SocketServer] Server loop has stopped.")
+        self._log("[SocketServer] Server loop has stopped.")
 
     def start(self):
         """Starts the socket server in a separate thread."""
@@ -132,7 +150,7 @@ class SocketServer:
             self.server_thread = threading.Thread(target=self._run)
             self.server_thread.daemon = True
             self.server_thread.start()
-            print("[SocketServer] Server started.")
+            self._log("[SocketServer] Server started.")
 
     def stop(self):
         """Stops the socket server."""
@@ -144,12 +162,12 @@ class SocketServer:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((self.host, self.port))
             except Exception as e:
-                print(f"[SocketServer] Error while stopping server: {e}")
+                self._log(f"[SocketServer] Error while stopping server: {e}", level="warning")
             
             self.sock.close()
             if self.server_thread:
                 self.server_thread.join(timeout=2)
-            print("[SocketServer] Server stopped.")
+            self._log("[SocketServer] Server stopped.")
 
 if __name__ == '__main__':
     # Example usage for testing

@@ -1,8 +1,11 @@
 import os
 import json
 import time
+import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Callable
+from researcher.local_llm import run_ollama_chat
+from researcher.config_loader import load_config
 
 # Ensure .env is loaded before reading API key.
 try:
@@ -12,10 +15,11 @@ except Exception:
     pass
 
 # --- Constants (adapted from Martin) ---
-RESPONSES_URL = os.environ.get("OPENAI_API_BASE_URL", "https://api.openai.com/v1/chat/completions") # Changed to chat completions endpoint
+RESPONSES_URL = os.environ.get("OPENAI_API_BASE_URL", "https://api.openai.com/v1/chat/completions")
 API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 if not API_KEY:
     print("\033[93mmartin: Warning - OPENAI_API_KEY not set; API calls will fail.\033[0m")
+_LOGGER = logging.getLogger("researcher.llm_utils")
 
 TIMEOUT_S = 60
 MAX_RETRIES = 3
@@ -28,13 +32,32 @@ HEADERS = {
 }
 
 # Model selection (adapted from Martin - these will eventually be configured via researcher's config)
-MODEL_MAIN = os.getenv("RESEARCHER_MODEL_MAIN", "gpt-4o-mini") # Adapted for current OpenAI naming
-MODEL_MINI = os.getenv("RESEARCHER_MODEL_MINI", "gpt-4o-mini") # Adapted for current OpenAI naming
+MODEL_MAIN = os.getenv("RESEARCHER_MODEL_MAIN", "gpt-5-mini") # Adapted for current OpenAI naming
+MODEL_MINI = os.getenv("RESEARCHER_MODEL_MINI", "gpt-5-mini") # Adapted for current OpenAI naming
+MODEL_FALLBACK = os.getenv("RESEARCHER_MODEL_FALLBACK", "gpt-4o-mini")
 
-SHOW_API_BARS = True # To be controlled by researcher's config/verbosity
+SHOW_API_BARS = False # Controlled by researcher's config/verbosity
 
 # --- LLM API Helpers (adapted from Martin) ---
-def _post_responses(payload: Dict[str, Any], timeout: int = TIMEOUT_S, label: str = "API") -> Dict[str, Any]:
+def _resolve_endpoint(base: str, path: str) -> str:
+    if not base:
+        return "https://api.openai.com/v1" + path
+    clean = base.rstrip("/")
+    if clean.endswith("/v1"):
+        return clean + path
+    if clean.endswith("/chat/completions"):
+        return clean[:-len("/chat/completions")] + path
+    if clean.endswith("/responses"):
+        return clean
+    return clean + "/v1" + path
+
+
+def _post_responses(
+    payload: Dict[str, Any],
+    timeout: int = TIMEOUT_S,
+    label: str = "API",
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
     """
     Makes an API call to the LLM endpoint (placeholder for now).
     Handles retries and basic error processing.
@@ -50,17 +73,60 @@ def _post_responses(payload: Dict[str, Any], timeout: int = TIMEOUT_S, label: st
         bar_ctx = tqdm(total=MAX_RETRIES, desc=label, unit="try", leave=False)
 
     # Adapt payload for OpenAI Chat Completions API
-    openai_payload = {
-        "model": payload["model"],
-        "messages": payload["input"],
-        "temperature": payload.get("temperature", 0.7),
-        "max_tokens": payload.get("max_output_tokens", 500),
-    }
+    max_out = payload.get("max_output_tokens", 500)
+    model_name = str(payload.get("model", "") or "")
+    use_responses_api = model_name.startswith("gpt-5")
+    if use_responses_api:
+        openai_payload = {
+            "model": payload["model"],
+            "input": payload.get("input", []),
+            "max_output_tokens": max_out,
+        }
+    else:
+        openai_payload = {
+            "model": payload["model"],
+            "messages": payload["input"],
+            "temperature": payload.get("temperature", 0.7),
+            "max_tokens": max_out,
+        }
+    endpoint = _resolve_endpoint(RESPONSES_URL, "/responses" if use_responses_api else "/chat/completions")
+    tried_local_fallback = False
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    def _chat_fallback() -> Dict[str, Any]:
+        chat_payload = {
+            "model": MODEL_FALLBACK,
+            "messages": payload.get("input", []),
+        }
+        chat_endpoint = _resolve_endpoint(RESPONSES_URL, "/chat/completions")
         try:
             import requests
-            r = requests.post(RESPONSES_URL, headers=HEADERS, json=openai_payload, timeout=timeout)
+            r = requests.post(chat_endpoint, headers=HEADERS, json=chat_payload, timeout=timeout)
+            if r.status_code != 200:
+                try:
+                    j = r.json()
+                except Exception:
+                    j = {}
+                api_err = j.get("error")
+                if isinstance(api_err, dict):
+                    return {"error": {"message": api_err.get("message") or f"HTTP {r.status_code}"}}
+                return {"error": {"message": f"HTTP {r.status_code}", "body": (r.text or "")[:2000]}}
+            data = r.json()
+            if "choices" in data and len(data["choices"]) > 0:
+                message = data["choices"][0].get("message", {})
+                if "content" in message:
+                    return {"output_text": message["content"]}
+            return {"error": {"message": "empty_response", "detail": "chat fallback returned no content"}}
+        except Exception as exc:
+            return {"error": {"message": "chat_fallback_failed", "detail": str(exc)}}
+
+    if progress_cb:
+        progress_cb("contacting model")
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            if progress_cb:
+                progress_cb(f"request {attempt}/{MAX_RETRIES}")
+            import requests
+            r = requests.post(endpoint, headers=HEADERS, json=openai_payload, timeout=timeout)
             status = r.status_code
             text = r.text or ""
 
@@ -74,12 +140,42 @@ def _post_responses(payload: Dict[str, Any], timeout: int = TIMEOUT_S, label: st
                 if bar_ctx:
                     bar_ctx.update(MAX_RETRIES - bar_ctx.n); bar_ctx.close()
                 
-                # Extract relevant part of OpenAI chat completions response
+                if data.get("error") is not None:
+                    api_err = data.get("error")
+                    if isinstance(api_err, dict):
+                        return {"error": {"message": api_err.get("message") or "API error", "type": api_err.get("type"), "code": api_err.get("code")}}
+                    return {"error": {"message": str(api_err) or "API error"}}
+                # Extract relevant part of OpenAI response.
                 if "choices" in data and len(data["choices"]) > 0:
                     message = data["choices"][0].get("message", {})
                     if "content" in message:
                         return {"output_text": message["content"]}
-                return {"output_text": ""} # Return empty if no content
+                if isinstance(data.get("output_text"), str):
+                    return {"output_text": data.get("output_text") or ""}
+                output = data.get("output")
+                if isinstance(output, list):
+                    for item in output:
+                        if not isinstance(item, dict):
+                            continue
+                        if isinstance(item.get("output_text"), str) and item.get("output_text"):
+                            return {"output_text": item.get("output_text") or ""}
+                        if item.get("type") not in (None, "message", "output_text", "text"):
+                            continue
+                        if isinstance(item.get("text"), str) and item.get("text"):
+                            return {"output_text": item.get("text") or ""}
+                        content = item.get("content", [])
+                        if isinstance(content, str) and content:
+                            return {"output_text": content}
+                        if not isinstance(content, list):
+                            continue
+                        for c in content:
+                            if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
+                                txt = c.get("text") or ""
+                                if txt:
+                                    return {"output_text": txt}
+                if use_responses_api:
+                    return _chat_fallback()
+                return {"error": {"message": "empty_response", "detail": "no output_text in response payload"}}
 
             else:
                 try:
@@ -93,15 +189,74 @@ def _post_responses(payload: Dict[str, Any], timeout: int = TIMEOUT_S, label: st
                                 "code": api_err.get("code"), "http_status": status}
                 else:
                     last_err = {"message": f"HTTP {status}", "http_status": status, "body": text[:2000]}
+
+                # If we hit quota/billing limits, try to fall back to the local model once.
+                if _is_quota_error(last_err) and not tried_local_fallback:
+                    tried_local_fallback = True
+                    local_resp = _local_fallback_answer(payload)
+                    if local_resp.get("output_text"):
+                        if bar_ctx:
+                            bar_ctx.close()
+                        return local_resp
         except requests.RequestException as e:
             last_err = {"message": "Network error", "detail": str(e)}
 
         if bar_ctx: bar_ctx.update(1)
         if attempt < MAX_RETRIES:
+            if progress_cb:
+                delay = BACKOFF_BASE_S * (2 ** (attempt - 1))
+                progress_cb(f"retrying in {delay:.1f}s")
             time.sleep(BACKOFF_BASE_S * (2 ** (attempt - 1)))
 
     if bar_ctx: bar_ctx.close()
+
+    if _is_quota_error(last_err) and not tried_local_fallback:
+        local_resp = _local_fallback_answer(payload)
+        if local_resp.get("output_text"):
+            return local_resp
+
     return {"error": last_err or {"message": "Unknown error"}}
+
+
+def _is_quota_error(err: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(err, dict):
+        return False
+    msg = (err.get("message") or "").lower()
+    code = (err.get("code") or "").lower()
+    http_status = err.get("http_status")
+    return (
+        "quota" in msg
+        or "billing" in msg
+        or "credit" in msg
+        or code in {"insufficient_quota", "quota_exceeded"}
+        or http_status == 429
+    )
+
+
+def _local_fallback_answer(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Best-effort local LLM fallback using Ollama when cloud quota is hit.
+    Returns {"output_text": "..."} on success, else {}.
+    """
+    try:
+        cfg = load_config()
+    except Exception:
+        return {}
+    model = cfg.get("local_model", "phi3")
+    host = cfg.get("ollama_host", "http://localhost:11434")
+    msgs = payload.get("input") or []
+    prompt_parts: List[str] = []
+    if isinstance(msgs, list):
+        for m in msgs:
+            if isinstance(m, dict) and m.get("content"):
+                prompt_parts.append(str(m.get("content")))
+    prompt = "\n\n".join(prompt_parts).strip()
+    if not prompt:
+        return {}
+    text = run_ollama_chat(model, prompt, host)
+    if text:
+        return {"output_text": text, "local_model": model}
+    return {}
 
 def _extract_output_text(resp_json: Dict[str, Any]) -> str:
     """

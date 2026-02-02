@@ -12,6 +12,39 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "local_model": "phi3",
     "ollama_host": "http://localhost:11434",
     "local_llm_enabled": False,
+    "local_llm": {
+        "enabled": False,
+        "streaming": False,
+        "fallbacks": [],
+    },
+    "ingest": {
+        "allowlist_roots": [],
+        "allowlist_exts": [],
+        "allowlist_mode": "warn",
+        "scan_proprietary": True,
+        "scan_mode": "warn",
+        "scan_max_bytes": 200000,
+    },
+    "trust_policy": {
+        "allow_cloud": False,
+        "allow_librarian_notes": True,
+        "allow_sources": ["internal", "public"],
+        "default_source": "internal",
+        "cloud_source": "public",
+        "encrypt_exports": False,
+        "encrypt_when_remote": True,
+        "encrypt_logs": False,
+        "encrypt_logs_when_remote": True,
+        "encryption_key_env": "MARTIN_ENCRYPTION_KEY",
+    },
+    "remote_transport": {
+        "type": "ssh",
+        "ssh_user": "",
+        "ssh_host": "",
+        "local_port": 6001,
+        "remote_port": 6001,
+        "identity_file": "",
+    },
     "embedding_model": "all-MiniLM-L6-v2",  # public HF model
     "vector_store": {"type": "faiss", "index_path": "data/index/faiss.index", "mock_index_path": "data/index/mock_index.pkl", "warm_on_start": False},
     "data_paths": {
@@ -52,18 +85,36 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "sandbox_mode": "workspace-write",  # read-only|workspace-write|full
         "command_allowlist": [],
         "command_denylist": [],
+        "hard_block_outside": False,
+        "allowed_roots": [],
+        "remote_policy": "block",
     },
     "context": {
         "auto": False,
         "max_recent": 10,
     },
+    "ui": {
+        "footer": False,
+        "api_progress": False,
+        "startup_compact": False,
+    },
     "socket_server": {
         "host": "127.0.0.1",
         "port": 6001,
+        "verbose": False,
+    },
+    "test_socket": {
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": 7002,
+        "fallback_to_stdin": False,
+        "timeout_s": 0,
+        "token_env": "MARTIN_TEST_SOCKET_TOKEN",
+        "allow_non_loopback": False,
     },
 }
 
-_NESTED_KEYS = ("vector_store", "data_paths", "cloud", "execution", "context", "auto_update", "rephraser", "socket_server")
+_NESTED_KEYS = ("vector_store", "data_paths", "cloud", "execution", "context", "auto_update", "rephraser", "socket_server", "test_socket", "behavior", "logging", "local_llm", "ingest", "trust_policy", "remote_transport", "ui")
 
 
 def _merge_config(base: Dict[str, Any], loaded: Dict[str, Any]) -> Dict[str, Any]:
