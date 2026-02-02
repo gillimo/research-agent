@@ -1,0 +1,37 @@
+{
+  "$schema": "C:/Users/gilli/OneDrive/Desktop/projects/opencode/opencode-schema.json",
+  "data": {
+    "directory": ".opencode"
+  },
+  "contextPaths": [
+    "opencode.local.md",
+    "AGENTS.md",
+    "docs/martin_operator_guide.md"
+  ],
+  "agents": {
+    "coder": {
+      "model": "local.phi3:latest",
+      "maxTokens": 2048
+    },
+    "task": {
+      "model": "local.phi3:latest",
+      "maxTokens": 2048
+    },
+    "summarizer": {
+      "model": "local.phi3:latest",
+      "maxTokens": 1024
+    },
+    "title": {
+      "model": "local.phi3:latest",
+      "maxTokens": 128
+    }
+  },
+  "shell": {
+    "path": "C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe",
+    "args": [
+      "-NoProfile",
+      "-Command"
+    ]
+  },
+  "autoCompact": true
+}

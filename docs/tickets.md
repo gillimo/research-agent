@@ -2,6 +2,7 @@ Ticket Backlog (priority, deps, status)
 =======================================
 
 Legend: [ ] todo, [~] in progress, [x] done
+Tag legend: [OPENCODE] [SOCKET] [SOCKETBRIDGE] [LOCAL] [BUG] [RAG] [TEST] [DOCS]
 
 Next Priority Order
 1) G4V: Verify host bootstrap script on clean machine
@@ -101,290 +102,54 @@ P6 – Legacy alignment
   Parse `AgentMartin_Operating_Manual.pdf` and `AgentMartin_Full_Ticket_Ledger.pdf`; add any missing behaviors to tickets.  
   Deps: none.
 
-P7 ? Codex CLI parity
-- [x] CX1: Approval policy modes (on-request/on-failure/never) and per-command escalation
-- [x] CX2: Sandboxing modes (read-only/workspace-write/full) with enforcement
-- [x] CX3: Command output summarization for long outputs
-- [x] CX4: Plan tool with explicit plan state tracking
-- [x] CX5: Test/run helpers with suggested next steps  
-  Added `/tests` slash command with repo-aware suggestions; added unit tests for helper selection.
-- [x] CX6: Diff/patch preview workflow for edits  
-  Dev flow now shows unified diff preview and prompts for approval; env `MARTIN_AUTO_APPLY=1` or approval_policy=never auto-applies; added preview test.
-- [x] CX7: Auto-context harvesting (git status, recent changes, repo summary)
-- [x] CX8: Resource/tool registry with list/read APIs  
-  Added `resources`/`resource` CLI + slash commands and internal abilities.
-- [x] CX9: Review mode heuristics (bugs/risks/tests focus)  
-  Heuristic review intent + review behavior guidance wired in orchestration/prompt.
-- [x] CX10: Rich TUI input (autocomplete/history/slash suggestions)  
-  Slash autocomplete + fuzzy slash matching + persistent readline history + input history search/clear + history pick + command palette with descriptions + palette pick + simple path completion + rich table panels (when available).
-- [x] CX32: Context refresh shortcuts + context-on-start UX  
-  `/context refresh` forces a new context pack; chat startup prints a 1-line context summary; prompt includes last command summary when available.  
-  Deps: CX7.
-
-P8 ? Codex parity audit (2025-12-29)
-- [x] CX11: Session persistence + resume  
-  Save/restore chat state (plan, last commands, approvals, context) across restarts; expose `/resume` and auto-resume on launch.  
-  Acceptance: persists session state (plan, approvals, cwd, context refs) to disk; `/resume` restores and prints a brief summary; failures do not crash and are logged.  
-  Deps: CX12.
-- [x] CX12: Deterministic tool execution ledger  
-  Record structured tool calls + outputs with timestamps, cwd, exit codes; surface in `/outputs` and allow export.  
-  Acceptance: ledger entries capture command/tool, args, cwd, duration, exit code, output summary; secrets redacted; `/outputs` lists and can export JSON.  
-  Deps: CX13.
-- [x] CX13: Command safety classifier  
-  Gate risky commands (rm, git reset, registry edits) with stronger confirmation; add allow/deny list by path and command.  
-  Acceptance: classifier assigns risk level; high-risk requires explicit confirmation or is blocked by policy; allow/deny list lives in `config/local.yaml`; unit tests cover common risky commands.  
+P7 ? OpenCode CLI replacement
+- [x] [OPENCODE] OC0: Local clone of OpenCode
+  Clone upstream repo into local workspace for integration.
+  Acceptance: repo exists at `projects/opencode`.
   Deps: none.
-- [x] CX14: Interactive command editing  
-  Allow user to edit a generated command before execution; support "explain" and "dry run".  
-  Acceptance: pre-exec prompt supports edit/approve/reject; `--dry-run` prints without executing; `--explain` shows rationale.  
-  Deps: CX13.
-- [x] CX15: Inline file diff viewer  
-  Side-by-side or unified diff with paging; link back to file/line for follow-up edits.  
-  Acceptance: diff view supports paging; references file/line anchors for follow-up; binary files show a safe stub.  
-  Deps: CX6.
-- [x] CX16: Repo-aware context pack  
-  Auto-attach repo map (top files, tech stack, recent changes, open PRs if available) and refresh on `/context`.  
-  Acceptance: `/context` shows repo summary (tree, languages, recent changes, open PRs if any); context pack can be saved and reused; redaction rules apply.  
-  Deps: CX12.
-- [x] CX17: Task queue + reminders  
-  Persist long-running tasks, show `next` action, and prompt on idle (beyond current supervisor loop).  
-  Acceptance: tasks persist across sessions; `/tasks` lists with next action; idle reminders reference open tasks; supports mark done.  
-  Deps: CX11.
-- [x] CX18: Local-only mode hardening  
-  Single toggle to disable all cloud calls and verify no outbound requests; warn if cloud config is present.  
-  Acceptance: local-only mode blocks cloud calls and logs denials; startup warns if cloud env vars are set; tests confirm no network usage.  
-  Deps: CX13.
-- [x] CX19: Librarian health + IPC diagnostics  
-  `/librarian status --verbose` with socket ping, last error, and cloud connectivity check.  
-  Acceptance: verbose status reports socket ping, last error from ledger, and cloud connectivity; non-zero exit on failure.  
-  Deps: CX12.
-- [x] CX20: Resource redaction policy tests  
-  Unit + integration tests for sanitization/allowlist, including edge cases (paths, emails, secrets).  
-  Acceptance: tests cover file paths, emails, tokens, registry keys, and command snippets; CI runs tests without real keys.  
-  Deps: CX13.
-
-P9 ? Codex parity audit (2025-12-29, follow-ups)
-- [x] CX21: Approval policy parity across flows  
-  Apply approval_policy consistently in chat, plan, fix-commands, and internal abilities.  
-  Acceptance: on-request requires explicit approval in every flow; on-failure auto-runs after a failure only; never auto-approves everywhere; tests cover each flow.  
-  Deps: CX1.
-- [x] CX22: Sandbox enforcement edge cases  
-  Expand sandbox detection for PowerShell redirects, git write ops, and pathless writes; add tests.  
-  Acceptance: blocks writes outside workspace reliably on Windows and POSIX; tests cover redirects, git, and pip installs.  
-  Deps: CX2.
-- [x] CX23: Command explainability  
-  Show a short rationale alongside proposed commands and approvals.  
-  Acceptance: every command plan includes a brief "why" line; override available to hide/show.  
-  Deps: CX14.
-- [x] CX24: Diff navigation helpers  
-  Add file/line anchors and quick open hints for diffs shown in the UI.  
-  Acceptance: diffs include file paths with line numbers when available; works for unified diffs.  
-  Deps: CX15.
-- [x] CX25: Tool ledger filtering + search  
-  Filter ledger by time, cwd, risk, and rc; add a simple text search.  
-  Acceptance: `/outputs ledger --filter rc!=0` and `--since 1h` behave; tests cover filters.  
-  Deps: CX12.
-- [x] CX26: Session export bundle  
-  Export transcript + ledger + context pack into a single JSON/zip.  
-  Acceptance: `/export session <path>` writes a bundle with consistent schema; no secrets in output.  
-  Deps: CX11, CX12, CX16.
-- [x] CX27: Context diff summaries  
-  Show what changed since last session (git diff/stat + recent files delta).  
-  Acceptance: `/context` includes a "since last session" block when snapshots exist.  
-  Deps: CX11, CX16.
-- [x] CX28: Local-only enforcement checks  
-  Runtime guard that aborts cloud calls even if config/env is set.  
-  Acceptance: cloud invocations are blocked and logged; tests verify no network on local-only mode.  
-  Deps: CX18.
-- [x] CX29: Librarian verbose status details  
-  Report IPC ping latency, last error, and cloud credentials presence.  
-  Acceptance: `/librarian status --verbose` includes latency and last error info with non-zero exit on failure.  
-  Deps: CX19.
-- [x] CX30: Review mode UX polish  
-  Add explicit review mode toggle that forces bug/risk/test focus.  
-  Acceptance: `/review on|off` changes response format and includes test guidance.  
-  Deps: CX9.
-- [x] CX31: Fix-command review parity  
-  Provide edit/explain/dry-run options for fix commands in the diagnosis loop (chat + plan flows).  
-  Acceptance: fix-command prompt supports edit/explain/dry-run and logs the selected action.  
-  Deps: CX14.
-
-P10 ? Librarian-driven RAG growth (local-first)
-- [x] L3: Librarian request API from Martin  
-  Add explicit commands for Martin to ask the Librarian for background research, gap filling, and RAG refresh.  
-  Acceptance: `/librarian request <topic>` enqueues a sanitized cloud request and logs it; Martin receives status updates.  
-  Deps: L2, CX12.
-- [x] L4: Proactive RAG update loop  
-  Librarian periodically proposes new ingest/update tasks based on low-confidence queries and topic gaps.  
-  Acceptance: gap signals are logged; Martin sees a prompt with suggested updates; user can approve/deny.  
-  Deps: L3, Q1.
-- [x] L5: RAG update chat between Martin and Librarian  
-  Introduce a lightweight “advice” channel where Librarian can message Martin with new sources, summaries, and update plans.  
-  Acceptance: Martin receives periodic update notes; `/librarian inbox` lists pending notes; can accept to ingest.  
-  Deps: L3, CX12.
-- [x] L6: Cloud update ingest pipeline  
-  On approval, Librarian can fetch/prepare sanitized sources and trigger ingestion into local RAG.  
-  Acceptance: ingest reports provenance, logs cloud snippet hashes, and updates index without blocking chat.  
-  Deps: L4, C2.
-
-P11 ? Librarian sources discovery
-- [x] L7: Source discovery requests  
-  Allow Martin to request public source suggestions and ingest them as notes.  
-  Acceptance: `/librarian sources <topic>` returns a note; `/librarian accept <n>` ingests sources text.  
-  Deps: L3.
-
-P12 ? Trust process audit follow-ups
-- [x] CX33: Explicit sanitize before cloud hop  
-  Ensure chat flow sanitizes prompts before any Librarian call; add assertion/guard in client.  
-  Acceptance: cloud-bound prompts are sanitized in `cli.py` and verified in `librarian_client.py`.  
-  Deps: L1, L2.
-- [x] DOC1: Cloud log path consistency  
-  Align docs to `logs/cloud/cloud.ndjson` and remove stale `.log` mentions.  
-  Acceptance: README and UX docs reference the correct path.  
-  Deps: none.
-- [x] DOC2: Agent mode trust disclosure  
-  Clarify `/agent on` auto-approves commands and how it interacts with approval policy.  
-  Acceptance: AGENTS and architecture docs state the behavior explicitly.  
-  Deps: CX1.
-- [x] B1: Privacy no-log actually disables ledger/log sinks  
-  Ensure session privacy mode suppresses `state_manager` ledger writes and `martin.log` writes.  
-  Acceptance: no-log prevents ledger/log writes; tests cover; docs updated.  
-  Deps: CX54.
-
-P13 ? Codex UX parity (additional)
-- [x] CX34: Full TUI shell  
-  Multi-pane TUI with selectable lists, key-driven navigation, and status panels.  
-  Acceptance: interactive panes for palette, tasks, logs, and context; keyboard navigation without slash commands.  
-  Notes: selectable lists, detail panes, and key navigation added.  
-  Deps: CX10.
-- [x] CX35: Inline command editor UI  
-  Provide a dedicated editing UI for proposed commands with preview and edit buffer.  
-  Acceptance: user can open editor, modify, and approve without re-typing in prompt.  
-  Notes: inline editor prompt added alongside external editor flow.  
-  Deps: CX14.
-- [x] CX36: Diff viewer everywhere  
-  Ensure any edit path (not just dev_flow) shows unified diff preview with paging.  
-  Acceptance: all file edits show diff preview and optional paging before apply.  
-  Notes: diff previews now cover transcript/export/output logs and append-only ability writes.  
-  Deps: CX6, CX15.
-- [x] CX37: Interactive file picker  
-  Add a file/browser picker (recent files, repo tree) to insert paths into commands.  
-  Acceptance: palette or slash command opens a picker with filtering and selection.  
-  Deps: CX10.
-- [x] CX38: Quick-open from diffs  
-  Provide interactive “open file at line” actions from diff output.  
-  Acceptance: diff view offers selectable file/line targets.  
-  Notes: diff previews emit /open hints and slash command displays snippets.  
-  Deps: CX15, CX36.
-- [x] CX39: Context pack auto-surface  
-  Automatically present context changes since last session without manual `/context`.  
-  Acceptance: on session start or before plan execution, display context delta.  
-Notes: context updates auto-surface on session start and before plan runs.  
-  Deps: CX16.
-- [x] CX40: Task queue UX panel  
-  Add a dedicated task view (list/add/complete) in TUI with reminders.  
-  Acceptance: tasks visible/editable in TUI and via slash commands.  
-  Notes: TUI task list supports add (a) and done (x).  
-  Deps: CX17, CX34.
-- [x] CX41: Review mode formatting parity  
-  Structured review output with sections for bugs, risks, and tests similar to Codex.  
-  Acceptance: review mode enforces structured output and includes test guidance block.  
-Notes: review responses enforce Findings/Questions/Tests format.  
-  Deps: CX9.
-- [x] CX42: Palette search across files/tests/outputs  
-  Extend palette to search files, recent outputs, and test commands.  
-  Acceptance: palette query returns file paths, test shortcuts, and output logs.  
-  Notes: palette now includes file/test/output matches when querying.  
-  Deps: CX34.
-- [x] CX43: Test run UI with last-run status  
-  Track last test command, status, and duration; surface in TUI/palette.  
-  Acceptance: `/tests` shows last-run status and rerun option.  
-  Notes: /tests run executes and records last status; TUI shows last test in context.  
-  Deps: CX5, CX34.
-- [x] CX44: TUI theming/branding consistency  
-  Standardize colors, headers, and panel layout to feel like Codex CLI.  
-  Acceptance: a consistent theme applies across TUI panels.  
-  Notes: consistent TUI theme applied to panels and headers.  
-  Deps: CX34.
-- [x] CX45: Workspace status banner  
-  Show branch/dirty state, last command status, and active mode at top of TUI.  
-  Acceptance: banner updates on changes and appears in chat.  
-  Deps: CX16, CX34.
-- [x] CX46: Active process chat panel  
-  Add a dedicated panel for "process chat" updates (thinking/plan/doing/done/next) streamed during work.  
-  Acceptance: panel is visible in TUI, updates in real time, and can be toggled.  
-  Notes: TUI process panel shows worklog entries and can be toggled.  
-  Deps: CX34, CX44.
-- [x] CX47: Heartbeat/worklog stream  
-  Emit periodic heartbeat summaries during long operations and store to a lightweight worklog.  
-  Acceptance: heartbeat appears in process panel; a `last 10` view is available.  
-  Notes: heartbeat emits to worklog and appears in process panel.  
-  Deps: CX46.
-- [x] CX48: Clock-in/out prompts in UI  
-  Prompt for clock-in on session start and clock-out on exit, writing to `docs/logbook.md`.  
-  Acceptance: prompts are visible in chat/TUI and can be skipped with a reason.  
-  Notes: chat and TUI prompt for clock-in/out with skip reasons.  
-  Deps: CX34.
-- [x] CX49: Internalize Martin coding MO  
-  Bake the operator guide rules into runtime checks and prompts (pre-flight git status, tickets, bug log, docs, tests, signoff).  
-  Acceptance: startup and exit flows enforce/verify the MO; non-compliance is surfaced with next steps.  
-  Notes: preflight checks and exit reminders enforce the MO.  
-  Deps: DOC3, CX34.
-- [x] CX50: Interrupt/cancel running commands  
-  Provide a reliable way to stop long-running commands (Ctrl+C or UI action) with clear status updates.  
-  Acceptance: cancel is logged, user sees a confirmation, and the agent resumes cleanly.  
-Notes: Ctrl+C cancels running commands and logs cancellation.  
-  Deps: CX34.
-- [x] CX51: Rerun last command/test shortcut  
-  Add a quick action to rerun the last command or last test with safety prompts.  
-  Acceptance: slash command or palette action reruns last command/test with approval/sandbox checks.  
-Notes: /rerun command|test replays last run with policy checks.  
-  Deps: CX42, CX43.
-- [x] CX52: Output search/filter UX  
-  Add output search/filtering in TUI and palette (by command, rc, or text).  
-  Acceptance: a user can filter recent outputs and open the matching log quickly.  
-Notes: /outputs search and TUI filter provide output discovery.  
-  Deps: CX25, CX34.
-- [x] CX53: Installable martin launcher  
-  Provide a system-wide launcher (Windows shim/PATH) and uninstall flow.  
-  Acceptance: `martin` works from any shell; uninstall removes shim cleanly.  
-Notes: install/uninstall scripts added for Windows PATH shim.  
-  Deps: Q2.
-- [x] CX54: Session privacy controls  
-  Add session-level controls to redact/omit sensitive content in transcripts/log exports.  
-  Acceptance: a `no-log` or redacted mode prevents sensitive output from being persisted.  
-Notes: /privacy no-log mode skips transcript and ledger persistence.  
-  Deps: CX12, CX26.
-- [x] CX55: Binary/large file safety  
-  Handle binary or large files safely in /open and diff previews with size caps.  
-  Acceptance: binary files show safe stubs and large files are truncated with warnings.  
-Notes: binary/large file previews are skipped with warnings.  
-  Deps: CX15, CX38.
-- [x] CX56: Model/provider status UX  
-  Surface local/cloud model status in banner and /status with warnings.  
-  Acceptance: banner shows current model/provider and local-only warnings.  
-Notes: status banner includes model info and warnings.  
-  Deps: CX18.
-- [x] CX57: Workspace boundary guardrails  
-  Prompt/log when operating outside repo root and require confirmation.  
-  Acceptance: explicit confirmation for commands outside workspace with log entry.  
-Notes: outside-workspace commands require confirmation and are logged.  
-  Deps: CX13.
-- [x] CX58: Keybindings/help discoverability  
-  Add a `/keys` view or TUI help overlay showing active bindings.  
-  Acceptance: keybinding help is available in chat and TUI.  
-Notes: /keys command documents chat/TUI keybindings.  
-  Deps: CX34.
-- [x] CX59: Recovery and retry UX  
-  Offer a resume/redo prompt after crashes or failed commands.  
-  Acceptance: last failed command can be retried safely with approval.  
-Notes: last failed command prompts /retry and is tracked in state.  
-  Deps: CX11, CX12.
-- [x] CX60: First-run onboarding wizard  
-  Add a guided setup flow (local-only toggle, handle, tests, log paths).  
-  Acceptance: first run steps are shown once and can be re-run via command.  
-Notes: onboarding wizard runs on first launch and via /onboarding.  
-  Deps: DOC3, CX49.
+- [ ] [OPENCODE] OC1: Fork or mirror OpenCode repo under gillimo
+  Decide fork vs vendor copy; keep upstream remote; document update flow.
+  Deps: OC0.
+- [x] [OPENCODE][LOCAL] OC2: Local model wiring for OpenCode
+  Configure LOCAL_ENDPOINT + default local model; verify Ollama discovery.
+  Acceptance: OpenCode starts in repo and uses local model by default.
+  Deps: OC0.
+- [x] [OPENCODE][DOCS] OC3: Guardrails context injection
+  Add opencode.local.md with Martin guardrails; ensure OpenCode loads it.
+  Acceptance: contextPaths include opencode.local.md and AGENTS.md.
+  Deps: OC2.
+- [ ] [OPENCODE] OC4: MCP bridge to Researcher
+  Expose researcher CLI as MCP tool for ask/ingest/status/librarian.
+  Acceptance: OpenCode can call Researcher via MCP with approval prompts.
+  Deps: OC2.
+- [ ] [OPENCODE][DOCS] OC5: CLI replacement plan + cutover
+  Map old CLI commands to OpenCode flows; define transition checklist.
+  Acceptance: documented migration steps and rollback path.
+  Deps: OC2, OC3.
+- [ ] [OPENCODE] OC6: Build + install automation (Windows)
+  Provide build script and local install wrapper for OpenCode.
+  Acceptance: one command builds opencode.exe and launches from repo.
+  Deps: OC1.
+- [ ] [OPENCODE][TEST] OC7: Migrate tests/validation to OpenCode
+  Port or re-run existing CLI verification steps for OpenCode-based flow.
+  Acceptance: updated test plan + pass/fail checklist for OpenCode CLI.
+  Deps: OC4, OC5.
+- [ ] [SOCKET][SOCKETBRIDGE] OC8: Migrate socket tooling to SocketBridge
+  Wire SocketBridge as the supported local transport for agent I/O.
+  Acceptance: OpenCode can communicate via SocketBridge with auth.
+  Deps: OC4.
+- [ ] [SOCKET][SOCKETBRIDGE][TEST] OC9: Validate SocketBridge integration
+  Investigate end-to-end socket flow with OpenCode + Researcher.
+  Acceptance: reproducible test steps with logs and expected outputs.
+  Deps: OC8.
+- [ ] [BUG][LOCAL] OC10: Local-only mode without Librarian
+  Fix bug so local model can run with Librarian disabled/offline.
+  Acceptance: OpenCode + Researcher works in local-only without cloud or Librarian.
+  Deps: OC2.
+- [ ] [RAG] OC11: RAG ingestion repair
+  Fix ingestion path so local RAG updates correctly in the new flow.
+  Acceptance: ingest updates index and retrieval shows new sources.
+  Deps: OC4.
 
 P14 ? Martin-Librarian communication gaps
 - [x] CL1: IPC protocol versioning + schema validation  
@@ -536,12 +301,12 @@ P15 ? Project goal completion (local control + proprietary safety)
 - [ ] G4V: Verify host bootstrap script on clean machine  
   Run `scripts/install_martin.ps1` on a clean machine and confirm venv + deps + shim.  
   Acceptance: install succeeds and `martin` launches without manual steps.  
-  Notes: local run timed out during pip install; venv created.  
+  Notes: local run timed out during pip install; venv created. Blocked on clean machine. Use `docs/clean_machine_run_log.md`.  
   Deps: G4.
 - [ ] G5V: Verify service script on clean machine  
   Validate `scripts/martin_service.ps1 start|stop|status` on a clean machine.  
   Acceptance: service starts/stops and PID tracking works.  
-  Notes: local run timed out while running `scripts/run_tests.ps1`; clean-machine verification pending.  
+  Notes: local run timed out while running `scripts/run_tests.ps1`; clean-machine verification pending. Use `docs/clean_machine_run_log.md`.  
   Deps: G5.
 - [x] G23: Add verification checklist command  
   Add `/verify` to print a checklist for bootstrap/service/pytest and venv status.  
@@ -634,6 +399,18 @@ P18 ? Codex behavior parity (conversation + model feel)
 - [x] BX8: Goal thread persistence  
   Maintain an active goal until explicitly cleared; follow-ups bind to it.  
   Acceptance: `/goal` shows/sets/clears; short follow-ups resolve to active goal.
+- [x] BX9: Follow-up resolver respects slash commands + review mode  
+  Skip follow-up resolution for slash commands and review-mode prompts; tighten short-followup detection to avoid overriding intent.  
+  Acceptance: `/review on` does not update the active goal; short prompts like "please review this repo" are not rewritten as follow-ups.
+- [x] BX10: Review mode preserves structured output even with command plans  
+  Ensure review-mode responses still include Findings/Questions/Tests even when `command:` lines are present, or defer structured output until after plan execution.  
+  Acceptance: review-mode requests show the structured headings in the assistant response without breaking command extraction.
+- [x] BX11: Request handling audit in logs  
+  Emit per-request audit events with intent, outcome, clarifying-question count, and satisfaction status to mirror Codex-style behavior tracking.  
+  Acceptance: each user turn logs a request_audit entry with intent, action_taken, result, and followup_needed=false/true.
+- [x] BX12: Review mode defaults to current workspace  
+  Avoid asking for repo URL/path when running inside a repo; use current workspace context by default.  
+  Acceptance: "please review this repo" proceeds without asking for the path.
 
 P19 ? UX behavior inventory
 - [x] UX1: Operator-visible behavior inventory  
@@ -743,6 +520,21 @@ P20 ? UAT harness stability
 - [x] UAT31: Extend mailbox duration  
   Increase mailbox scenario duration to allow prompts and deferred inputs to fire.  
   Acceptance: mailbox runs have enough time for approvals to appear.
+- [x] UAT74: Mailbox quit should end runs even during active plans  
+  Ensure mailbox auto-quit shuts down the CLI even if a plan is executing or awaiting approval.  
+  Acceptance: mailbox runs exit within the configured duration without hanging.
+- [x] UAT78: Mailbox exit prompt should not override approvals  
+  Avoid sending an extra approval response during mailbox shutdown if the scenario already answered the prompt.  
+  Acceptance: mailbox exit does not send duplicate "no" responses after a "yes" approval.
+- [x] UAT75: Split behavior UAT into focused scenarios  
+  Add smoke/review/goal scenarios with shorter durations for quicker UX checks.  
+  Acceptance: each scenario completes in under 60 seconds and logs NDJSON events.
+- [x] UAT76: Fast smoke profile for behavior UAT  
+  Provide a short mailbox duration scenario for quick regressions.  
+  Acceptance: smoke run finishes in under 45 seconds and captures prompt/response flow.
+- [x] UAT77: Document mailbox check loop in UAT plan  
+  Update the UAT plan to require checking mailbox logs after each scenario run.  
+  Acceptance: `docs/uat_test_plan.md` includes the loop (run -> check mailbox -> rerun if needed).
 - [x] UAT32: Gate mailbox follow-up on completion  
   Send the follow-up question only after "Done. OK" appears, and extend mailbox duration.  
   Acceptance: mailbox follow-up no longer lands mid-plan.
@@ -918,6 +710,52 @@ P20b ? UAT mailbox mode
 - [x] UAT7b: Mailbox keep-alive window  
   Keep session alive for `mailbox_duration` before exit.  
   Acceptance: events continue to stream during window.
+
+P20c ? Mailbox robustness (extended behavior testing)
+- [x] MB1: Long-lived mailbox session mode  
+  Add a harness mode that keeps the CLI session open and allows multiple send/check cycles without auto-quit.  
+  Acceptance: mailbox session stays alive across multiple input batches until explicitly closed.
+- [x] MB2: Mailbox transcript aggregation  
+  Aggregate socket/stdout events into a single response blob on demand (with cursor-based incremental fetch).  
+  Acceptance: `collect()` returns only new output since last check.
+- [x] MB3: Mailbox queue input API  
+  Allow queued inputs to be sent asynchronously without blocking the harness thread.  
+  Acceptance: inputs can be queued while the CLI is busy; they are sent once a prompt appears.
+- [x] MB4: Prompt-aware async send  
+  Gate queued inputs on prompt events (per prompt type) and log when they fire.  
+  Acceptance: queued inputs only fire on matching prompt tokens.
+- [x] MB5: Late-output capture window  
+  Keep collecting output after the last input for a configurable grace period.  
+  Acceptance: late responses are included in the next `collect()` call.
+- [x] MB6: Mailbox session metadata  
+  Record session id, start/end timestamps, and last prompt in the mailbox log.  
+  Acceptance: NDJSON includes session metadata entries for each run.
+- [x] MB7: Complex-task mailbox scenario  
+  Add a scenario that sends a multi-step request, waits, then checks the mailbox for queue, plan, execution, and summary.  
+  Acceptance: scenario asserts queue created, progress reported, summary present.
+- [x] MB8: Mailbox regression checklist  
+  Document the mailbox loop (send -> wait -> collect -> decide) and required checks in `docs/uat_test_plan.md`.  
+  Acceptance: mailbox checklist includes late-output verification and prompt gating.
+
+P20d ? Mailbox ambition follow-ups
+- [x] MB9: Fix gpt-5 Responses payload/output parsing  
+  Ensure Responses API calls yield assistant output for planner + main responses.  
+  Acceptance: mailbox complex scenario logs a response and queue is created.
+- [x] MB10: Mailbox complex scenario assertions  
+  Require Action queue + progress + summary tokens in collect output.  
+  Acceptance: complex mailbox scenario passes without missing token warnings.
+- [x] MB11: Mailbox collect export file  
+  Add `mailbox_collect_path` to write the latest collected output to a file for easy review.  
+  Acceptance: collect step writes a TXT file with new output only.
+- [x] MB12: Long-run transcript replay harness  
+  Replay a multi-turn transcript via mailbox and assert invariants (plan->execute->summary).  
+  Acceptance: replay run completes with all required tokens present.
+- [x] MB13: Mailbox idle check-ins  
+  Add optional periodic “heartbeat collect” for long runs.  
+  Acceptance: event log shows periodic collect entries during idle waits.
+- [x] MB14: Interactive socket console for UAT  
+  Provide a CLI tool to send inputs to the test socket and stream outputs in real time for manual UAT.  
+  Acceptance: console connects, prints outputs, and sends inputs without blocking.
 
 P21 ? UX polish fixes
 - [x] UX6: Fix duplicate footer render in chat flow  
