@@ -8,6 +8,21 @@ Research Agent Workspace
 
 Two-agent system: a local agent consumes the RAG store built by the researcher, plus a cloud assistant for breadth/recall.
 
+Architecture
+------------
+```
+Sources -> Ingest -> Index (FAISS/SimpleIndex) -> Retrieve
+                         |                        |
+                         v                        v
+                     Librarian               Local Agent
+                         |                        |
+                         v                        v
+                    Cloud Assistant <---- Orchestrator
+                         |
+                         v
+                      Responses
+```
+
 Current stack
 - Local model runtime: Ollama, with `phi3` (mini / mini-128k) already installed in `C:\Users\gilli\.ollama`.
 - Embeddings/vector store: default `all-MiniLM-L6-v2` + FAISS index (`config/local.yaml`) with SimpleIndex fallback if model is unavailable.
