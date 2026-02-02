@@ -578,6 +578,9 @@ def cmd_ingest(cfg, paths: List[str], force_simple: bool = False, exts: Optional
     if not paths:
         print("No files provided to ingest.", file=sys.stderr)
         return 1
+    local_only = bool(cfg.get("local_only")) or os.environ.get("RESEARCHER_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes"}
+    if local_only:
+        skip_librarian = True
     ensure_dirs(cfg)
     st = load_state()
     _get_cli_logger(cfg).info("ingest paths=%d force_simple=%s max_files=%d", len(paths), force_simple, max_files)

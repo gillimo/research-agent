@@ -142,7 +142,7 @@ P7 ? OpenCode CLI replacement
   Investigate end-to-end socket flow with OpenCode + Researcher.
   Acceptance: reproducible test steps with logs and expected outputs.
   Deps: OC8.
-- [ ] [BUG][LOCAL] OC10: Local-only mode without Librarian
+- [~] [BUG][LOCAL] OC10: Local-only mode without Librarian
   Fix bug so local model can run with Librarian disabled/offline.
   Acceptance: OpenCode + Researcher works in local-only without cloud or Librarian.
   Deps: OC2.
