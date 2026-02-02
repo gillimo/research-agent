@@ -146,7 +146,7 @@ P7 ? OpenCode CLI replacement
   Fix bug so local model can run with Librarian disabled/offline.
   Acceptance: OpenCode + Researcher works in local-only without cloud or Librarian.
   Deps: OC2.
-- [ ] [RAG] OC11: RAG ingestion repair
+- [~] [RAG] OC11: RAG ingestion repair
   Fix ingestion path so local RAG updates correctly in the new flow.
   Acceptance: ingest updates index and retrieval shows new sources.
   Deps: OC4.

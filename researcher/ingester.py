@@ -31,9 +31,30 @@ def ingest_files(idx, files: Iterable[Path], trust_label: Optional[str] = None, 
             continue
         chunks = simple_chunk(text)
         if isinstance(idx, FaissIndex):
-            idx.add(chunks, [{"path": str(fp), "chunk": c[:200], "trust": trust, "source_type": source_type} for c in chunks])
+            idx.add(
+                chunks,
+                [
+                    {
+                        "path": str(fp),
+                        "chunk": c,
+                        "chunk_preview": c[:200],
+                        "trust": trust,
+                        "source_type": source_type,
+                    }
+                    for c in chunks
+                ],
+            )
         else:
             for chunk in chunks:
-                idx.add(chunk, {"path": str(fp), "chunk": chunk[:200], "trust": trust, "source_type": source_type})
+                idx.add(
+                    chunk,
+                    {
+                        "path": str(fp),
+                        "chunk": chunk,
+                        "chunk_preview": chunk[:200],
+                        "trust": trust,
+                        "source_type": source_type,
+                    },
+                )
         ingested += 1
     return {"ingested": ingested, "errors": errors}
