@@ -6,7 +6,7 @@ Mission Learning Statement
 Research Agent Workspace
 ========================
 
-Two-agent system: a local "researcher" that owns the RAG store and a cloud assistant consulted through sanitized queries for breadth/recall.
+Two-agent system: a local agent consumes the RAG store built by the researcher, plus a cloud assistant for breadth/recall.
 
 Current stack
 - Local model runtime: Ollama, with `phi3` (mini / mini-128k) already installed in `C:\Users\gilli\.ollama`.
@@ -67,3 +67,9 @@ Project references
 - `docs/architecture.md`: system diagram, data flow, and guardrails.
 - `docs/setup_local.md`: local setup, model/embedding notes, and run commands.
 - `docs/tickets.md`: ticket backlog including Codex parity audit (CX11-CX20).
+
+## Metadata
+- Completeness: 62%
+- Known issues: In-flight features; local-only defaults
+
+
