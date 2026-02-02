@@ -32,5 +32,9 @@ Known gaps (next work)
 - Fix local-only mode to run without Librarian active.
 - Repair RAG ingestion in the new flow.
 
+SocketBridge migration (current)
+- Researcher socket server now uses SocketBridge (length-prefixed JSON, auth/allowlist).
+- Requires `socketbridge` dependency in `requirements.txt`.
+
 Notes
 - OpenCode upstream repo is archived; plan whether to stay or move to its successor.

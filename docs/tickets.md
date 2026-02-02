@@ -134,11 +134,11 @@ P7 ? OpenCode CLI replacement
   Port or re-run existing CLI verification steps for OpenCode-based flow.
   Acceptance: updated test plan + pass/fail checklist for OpenCode CLI.
   Deps: OC4, OC5.
-- [ ] [SOCKET][SOCKETBRIDGE] OC8: Migrate socket tooling to SocketBridge
+- [~] [SOCKET][SOCKETBRIDGE] OC8: Migrate socket tooling to SocketBridge
   Wire SocketBridge as the supported local transport for agent I/O.
   Acceptance: OpenCode can communicate via SocketBridge with auth.
   Deps: OC4.
-- [ ] [SOCKET][SOCKETBRIDGE][TEST] OC9: Validate SocketBridge integration
+- [~] [SOCKET][SOCKETBRIDGE][TEST] OC9: Validate SocketBridge integration
   Investigate end-to-end socket flow with OpenCode + Researcher.
   Acceptance: reproducible test steps with logs and expected outputs.
   Deps: OC8.

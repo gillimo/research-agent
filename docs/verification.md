@@ -21,10 +21,14 @@ Status
    - `scripts\\run_tests.ps1`
    - Use `scripts\\run_tests.ps1 -SkipInstall` to avoid reinstalling deps.
 
-4) Remote transport check (optional)
+4) SocketBridge IPC smoke (optional)
+   - Start `martin` (or run the CLI that starts the socket server)
+   - `python scripts\\socketbridge_smoke.py`
+
+5) Remote transport check (optional)
    - Set `remote_transport.ssh_host` in `config\\local.yaml`
    - Run `/remote status` and confirm validation passes
 
-5) Trust policy key (optional)
+6) Trust policy key (optional)
    - `/trust keygen` and set `MARTIN_ENCRYPTION_KEY`
    - `/export session logs\\session_export.json` (check `.enc` when enabled)
